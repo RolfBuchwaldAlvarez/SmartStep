@@ -1,0 +1,22 @@
+# Template – the owner moves it to .github/workflows/ (agents may not change workflows).
+# Runs the conductor's tests on PRs that change the factory files.
+name: factory-tests
+
+on:
+  pull_request:
+    paths:
+      - ".github/factory/**"
+      - ".github/factory.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - run: python3 -m unittest discover -s .github/factory -v

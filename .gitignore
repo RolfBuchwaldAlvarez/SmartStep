@@ -46,3 +46,6 @@ proguard/
 # Build Artifacts
 *.apk
 *.aab
+
+# Python
+__pycache__/

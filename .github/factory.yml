@@ -1,0 +1,6 @@
+# Marks this repository as a factory repository (my-ai-second-brain#173).
+# The agents' pollers work here in label mode: they only do what the
+# conductor's labels next:<task>:<agent> ask.
+implementer: codex
+judges: claude, hermes
+max_rounds: 3
