@@ -50,13 +50,13 @@ LABEL_COLORS = {"next:": "1d76db", "needs:owner": "d93f0b", "step:acceptance": "
 
 def load_config(path: Path) -> dict:
     """The small `key: value` file .github/factory.yml (lists comma-separated)."""
-    config = {"implementer": "codex", "judges": ["claude", "hermes"], "max_rounds": 3, "owner_paths": [".github/"]}
+    config = {"implementer": "codex", "judges": ["claude", "hermes"], "max_rounds": 3}
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if ":" not in line:
             continue
         key, value = (part.strip() for part in line.split(":", 1))
-        if key in ("judges", "owner_paths"):
+        if key == "judges":
             config[key] = [v.strip() for v in value.split(",") if v.strip()]
         elif key == "max_rounds":
             config[key] = int(value)

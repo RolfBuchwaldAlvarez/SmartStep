@@ -31,8 +31,7 @@ PROOFREAD = review("codex", body="Proofread: no findings.", commit=OLD)
 
 class Config(unittest.TestCase):
     def test_factory_yml(self):
-        self.assertEqual(CONFIG, {"implementer": "codex", "judges": ["claude", "hermes"], "max_rounds": 3,
-                                  "owner_paths": [".github/"]})
+        self.assertEqual(CONFIG, {"implementer": "codex", "judges": ["claude", "hermes"], "max_rounds": 3})
 
 
 class Ticket(unittest.TestCase):
