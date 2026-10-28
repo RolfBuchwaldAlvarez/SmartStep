@@ -116,7 +116,7 @@ class Sync(unittest.TestCase):
         c.sync_labels(gh, 9, {"next:judge:claude", "factory:ready", "bug"}, {"next:judge:hermes"}, {"next:judge:hermes"})
         self.assertIn(("POST", "/issues/9/labels", {"labels": ["next:judge:hermes"]}), gh.calls)
         self.assertIn(("DELETE", "/issues/9/labels/next%3Ajudge%3Aclaude", None), gh.calls)
-        self.assertFalse(any("factory" in p or "bug" in p for _, p, _ in gh.calls if _ == "DELETE"))
+        self.assertFalse(any("factory" in p or "bug" in p for m, p, _ in gh.calls if m == "DELETE"))
 
     def test_nothing_to_do_changes_nothing(self):
         gh = FakeGitHub()
