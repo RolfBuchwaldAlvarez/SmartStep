@@ -10,10 +10,13 @@ on the head, checks) and sets or removes labels so that they match:
           no proofread yet (first hour)  -> next:proofread:<author>
           a judge's approval missing     -> next:judge:<judge>
           all judges reviewed the head,
-          not all approve, or CI red     -> next:fix:<author> (plus the open judges)
+          not all approve or CI red      -> next:fix:<author> (plus the open judges)
           all approve, CI green          -> next:merge:<author>
           a judge at the round limit     -> needs:owner (one comment)
-  ticket  closed with factory:ready      -> step:acceptance, until the owner sets accepted
+  ticket  closed as completed with
+          factory:ready and a merged PR  -> step:acceptance, until the owner sets accepted
+  other   open issue or PR (e.g. the
+          owner removed factory:ready)   -> none of the conductor's labels
 
 The agents' pollers act on the next:* labels addressed to them and decide the
 details (rounds, re-checks, one run at a time). Re-running changes nothing.
@@ -126,7 +129,7 @@ def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: di
         if checks == "red":
             return {f"next:fix:{author}"}
         return set()                                       # checks still running
-    if len(present) == len(judges) or checks == "red":
+    if len(present) == len(judges):                        # a fix round waits for both judgements
         labels.add(f"next:fix:{author}")
     return labels
 
@@ -194,11 +197,13 @@ def reconcile(gh, config: dict, now: float) -> None:
         ticket = linked_ticket(pr)
         if ticket is not None and agent_of(pr["user"]["login"]):
             by_ticket.setdefault(ticket, pr)
+    handled = set()
     for issue in gh.all("/issues?state=open&labels=factory:ready"):
         if issue.get("pull_request"):
             continue
         current = {l["name"] for l in issue["labels"]}
         sync_labels(gh, issue["number"], current, ticket_labels(issue["number"] in by_ticket, config), known)
+        handled.add(issue["number"])
     tickets = {i["number"] for i in gh.all("/issues?state=all&labels=factory:ready") if not i.get("pull_request")}
     for ticket, pr in by_ticket.items():
         if ticket not in tickets:
@@ -208,12 +213,17 @@ def reconcile(gh, config: dict, now: float) -> None:
         checks = checks_state(gh.all(f"/commits/{pr['head']['sha']}/check-runs"))
         current = {l["name"] for l in pr["labels"]}
         sync_labels(gh, pr["number"], current, pr_labels(full, reviews, checks, now, config), known)
-    for issue in gh.all("/issues?state=closed&labels=factory:ready"):
-        if issue.get("pull_request") or issue.get("state_reason") != "completed":
-            continue
+        handled.add(pr["number"])
+    for item in gh.all("/issues?state=open"):            # no longer a factory item: clear our labels
+        current = {l["name"] for l in item["labels"]}
+        if item["number"] not in handled and any(name.startswith(MANAGED) for name in current):
+            sync_labels(gh, item["number"], current, set(), known)
+    closed = [i for i in gh.all("/issues?state=closed&labels=factory:ready") if not i.get("pull_request")]
+    merged = {linked_ticket(p) for p in gh.all("/pulls?state=closed") if p.get("merged_at")} if closed else set()
+    for issue in closed:
         current = {l["name"] for l in issue["labels"]}
-        desired = acceptance_labels(current)
-        sync_labels(gh, issue["number"], current, desired, known)
+        delivered = issue.get("state_reason") == "completed" and issue["number"] in merged
+        sync_labels(gh, issue["number"], current, acceptance_labels(current) if delivered else set(), known)
 
 
 def main() -> int:

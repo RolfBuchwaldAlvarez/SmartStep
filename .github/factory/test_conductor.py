@@ -75,6 +75,10 @@ class PullRequest(unittest.TestCase):
         self.assertEqual(self.labels(reviews, checks="pending"), set())
         self.assertEqual(self.labels(reviews, checks="red"), {"next:fix:codex"})
 
+    def test_red_ci_waits_for_both_judgements_before_a_fix(self):
+        self.assertEqual(self.labels([PROOFREAD], checks="red"), {"next:judge:claude", "next:judge:hermes"})
+        self.assertEqual(self.labels([PROOFREAD, review("claude", "APPROVED")], checks="red"), {"next:judge:hermes"})
+
     def test_a_comment_keeps_an_approval_and_a_stale_approval_does_not_count(self):
         keep = [PROOFREAD, review("claude", "APPROVED"), review("hermes", "APPROVED"), review("hermes", body="note")]
         self.assertEqual(self.labels(keep), {"next:merge:codex"})
@@ -103,11 +107,28 @@ class PullRequest(unittest.TestCase):
 
 
 class FakeGitHub:
-    def __init__(self, labels=()):
+    def __init__(self, labels=(), lists=None, prs=None):
         self.calls, self.labels = [], set(labels)
+        self.lists, self.prs = lists or {}, prs or {}
 
     def call(self, method, path, body=None):
+        if method == "GET":
+            return self.prs[int(path.rsplit("/", 1)[1])]
         self.calls.append((method, path, body))
+
+    def all(self, path):
+        return self.lists.get(path, [])
+
+
+def item(number, *labels, **extra):
+    return dict({"number": number, "labels": [{"name": n} for n in labels]}, **extra)
+
+
+def lists(open_ready=(), open_all=(), closed_ready=(), open_prs=(), closed_prs=()):
+    return {"/issues?state=open&labels=factory:ready": list(open_ready), "/issues?state=open": list(open_all),
+            "/issues?state=all&labels=factory:ready": list(open_ready) + list(closed_ready),
+            "/issues?state=closed&labels=factory:ready": list(closed_ready),
+            "/pulls?state=open": list(open_prs), "/pulls?state=closed": list(closed_prs)}
 
 
 class Sync(unittest.TestCase):
@@ -135,6 +156,37 @@ class Sync(unittest.TestCase):
         gh = FakeGitHub()
         c.sync_labels(gh, 9, set(), {"next:fix:codex"}, set())
         self.assertEqual(gh.calls[0], ("POST", "/labels", {"name": "next:fix:codex", "color": "1d76db"}))
+
+
+class Reconcile(unittest.TestCase):
+    def run_conductor(self, **kw):
+        gh = FakeGitHub(lists=lists(**kw))
+        c.reconcile(gh, CONFIG, NOW)
+        return gh.calls
+
+    def test_withdrawn_readiness_clears_task_labels(self):
+        ticket = item(5, "next:implement:codex", "bug")
+        fix = item(9, "next:fix:codex", "bug", pull_request={})
+        calls = self.run_conductor(open_all=[ticket, fix], open_prs=[pr(labels=[{"name": "next:fix:codex"}])])
+        self.assertEqual(sorted(p for m, p, _ in calls if m == "DELETE"),
+                         ["/issues/5/labels/next%3Aimplement%3Acodex", "/issues/9/labels/next%3Afix%3Acodex"])
+        self.assertEqual([p for m, p, _ in calls if m != "DELETE"], [])
+
+    def test_nothing_managed_makes_no_calls(self):
+        self.assertEqual(self.run_conductor(open_all=[item(5, "bug")]), [])
+
+    def test_acceptance_needs_a_merged_pr(self):
+        closed = item(5, "factory:ready", state_reason="completed")
+        self.assertEqual(self.run_conductor(closed_ready=[closed]), [])
+        unmerged = pr(merged_at=None)
+        self.assertEqual(self.run_conductor(closed_ready=[closed], closed_prs=[unmerged]), [])
+        merged = pr(merged_at="2027-01-16T08:00:00Z")
+        calls = self.run_conductor(closed_ready=[closed], closed_prs=[merged])
+        self.assertIn(("POST", "/issues/5/labels", {"labels": ["step:acceptance"]}), calls)
+
+    def test_acceptance_is_removed_without_a_merged_pr(self):
+        calls = self.run_conductor(closed_ready=[item(5, "factory:ready", "step:acceptance", state_reason="completed")])
+        self.assertEqual(calls, [("DELETE", "/issues/5/labels/step%3Aacceptance", None)])
 
 
 if __name__ == "__main__":
