@@ -1,4 +1,3 @@
-# Template – the owner moves it to .github/workflows/ (agents may not change workflows).
 # Runs the conductor's tests on PRs that change the factory files.
 name: factory-tests
 
