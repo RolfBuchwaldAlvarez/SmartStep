@@ -1,6 +1,12 @@
 # Marks this repository as a factory repository (my-ai-second-brain#173).
 # The agents' pollers work here in label mode: they only do what the
 # conductor's labels next:<task>:<agent> ask.
-implementer: codex
-judges: claude, hermes
+#
+# implementers: who may implement a ticket; the first is the default, a ticket
+#   label implementer:<name> picks another, implementer:owner means the owner.
+# judges: in order of preference; a PR's judges are the first judges_per_pr
+#   of them other than its author, so nobody judges their own PR.
+implementers: codex, claude
+judges: claude, hermes, codex
+judges_per_pr: 2
 max_rounds: 3

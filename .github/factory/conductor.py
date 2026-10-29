@@ -6,7 +6,12 @@ and every 15 minutes. It reads the state from GitHub only (tickets, PRs, reviews
 on the head, checks) and sets or removes labels so that they match:
 
   ticket  factory:ready, no PR yet       -> next:implement:<implementer>
-  PR      conflicts with its base        -> next:update:<author>
+          (implementer:<name> picks one of `implementers`, default the first;
+          implementer:owner means the owner implements: no label)
+  PR      by an agent or the owner; its judges are the first `judges_per_pr`
+          of `judges` other than its author (the owner's PRs: proofread,
+          update, fix and merge are his, the conductor only asks the judges)
+          conflicts with its base        -> next:update:<author>
           no proofread yet (first hour)  -> next:proofread:<author>
           a judge's approval missing     -> next:judge:<judge>
           all judges reviewed the head,
@@ -15,8 +20,9 @@ on the head, checks) and sets or removes labels so that they match:
           a judge at the round limit     -> needs:owner (one comment)
   ticket  closed as completed with
           factory:ready and a merged PR  -> step:acceptance, until the owner sets accepted
-  other   open issue or PR (e.g. the
-          owner removed factory:ready)   -> none of the conductor's labels
+  other   open issue, a PR by someone else,
+          or a PR for a ticket without
+          factory:ready                  -> none of the conductor's labels
 
 The agents' pollers act on the next:* labels addressed to them and decide the
 details (rounds, re-checks, one run at a time). Re-running changes nothing.
@@ -50,18 +56,16 @@ LABEL_COLORS = {"next:": "1d76db", "needs:owner": "d93f0b", "step:acceptance": "
 
 def load_config(path: Path) -> dict:
     """The small `key: value` file .github/factory.yml (lists comma-separated)."""
-    config = {"implementer": "codex", "judges": ["claude", "hermes"], "max_rounds": 3}
+    config = {"implementers": ["codex"], "judges": ["claude", "hermes"], "judges_per_pr": 2, "max_rounds": 3}
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if ":" not in line:
             continue
         key, value = (part.strip() for part in line.split(":", 1))
-        if key == "judges":
-            config[key] = [v.strip() for v in value.split(",") if v.strip()]
-        elif key == "max_rounds":
+        if key in ("judges", "implementers", "implementer"):     # `implementer` is the former single key
+            config["implementers" if key == "implementer" else key] = [v.strip() for v in value.split(",") if v.strip()]
+        elif key in ("max_rounds", "judges_per_pr"):
             config[key] = int(value)
-        elif key == "implementer":
-            config[key] = value
     return config
 
 
@@ -69,6 +73,24 @@ def load_config(path: Path) -> dict:
 
 def agent_of(login: str) -> str | None:
     return AGENT_LOGINS.get((login or "").lower())
+
+
+def author_of(login: str) -> str | None:
+    """The agent's name, "owner" for the owner, None for anyone else."""
+    return "owner" if (login or "").lower() == OWNER_LOGIN.lower() else agent_of(login)
+
+
+def implementer_for(labels: set[str], config: dict) -> str:
+    """The ticket's implementer: an `implementer:<name>` label naming one of `implementers` or the owner,
+    otherwise the first of `implementers`."""
+    allowed = set(config["implementers"]) | {"owner"}
+    chosen = sorted(l.split(":", 1)[1] for l in labels if l.startswith("implementer:") and l.split(":", 1)[1] in allowed)
+    return chosen[0] if len(chosen) == 1 else config["implementers"][0]
+
+
+def judges_for(author: str, config: dict) -> list[str]:
+    """Nobody judges their own PR; the first `judges_per_pr` of the others do."""
+    return [j for j in config["judges"] if j != author][:config["judges_per_pr"]]
 
 
 def is_real(review: dict) -> bool:
@@ -90,24 +112,26 @@ def checks_state(check_runs: list[dict]) -> str:
     return "green"
 
 
-def ticket_labels(has_pr: bool, config: dict) -> set[str]:
-    return set() if has_pr else {f"next:implement:{config['implementer']}"}
+def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset()) -> set[str]:
+    implementer = implementer_for(set(labels), config)
+    return set() if has_pr or implementer == "owner" else {f"next:implement:{implementer}"}
 
 
 def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: dict) -> set[str]:
     """The labels a factory PR should carry right now. Pure."""
-    author = agent_of(pr["user"]["login"])
+    author = author_of(pr["user"]["login"])
     if author is None or pr.get("draft"):
         return set()
+    by_owner = author == "owner"
     head = pr["head"]["sha"]
     reviews = [r for r in reviews if is_real(r)]
-    if pr.get("mergeable_state") == "dirty":
+    if pr.get("mergeable_state") == "dirty" and not by_owner:
         return {f"next:update:{author}"}
     proofread = any(agent_of(r["user"]["login"]) == author and PROOFREAD.match(r.get("body") or "") for r in reviews)
     opened = datetime.strptime(pr["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
-    if not proofread and now - opened <= PROOFREAD_WAIT:
+    if not by_owner and not proofread and now - opened <= PROOFREAD_WAIT:
         return {f"next:proofread:{author}"}
-    judges = [j for j in config["judges"] if j != author]
+    judges = judges_for(author, config)
     open_judges, present = [], []
     for judge in judges:
         theirs = [r for r in reviews if agent_of(r["user"]["login"]) == judge]
@@ -123,6 +147,8 @@ def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: di
         if not approved_head:
             open_judges.append(judge)
     labels = {f"next:judge:{j}" for j in open_judges}
+    if by_owner:                                           # fixing and merging are his
+        return labels
     if not open_judges:
         if checks == "green":
             return {f"next:merge:{author}"}
@@ -195,19 +221,23 @@ def reconcile(gh, config: dict, now: float) -> None:
     by_ticket = {}
     for pr in prs:
         ticket = linked_ticket(pr)
-        if ticket is not None and agent_of(pr["user"]["login"]):
+        if ticket is not None and author_of(pr["user"]["login"]):
             by_ticket.setdefault(ticket, pr)
     handled = set()
     for issue in gh.all("/issues?state=open&labels=factory:ready"):
         if issue.get("pull_request"):
             continue
         current = {l["name"] for l in issue["labels"]}
-        sync_labels(gh, issue["number"], current, ticket_labels(issue["number"] in by_ticket, config), known)
+        desired = ticket_labels(issue["number"] in by_ticket, config, frozenset(current))
+        sync_labels(gh, issue["number"], current, desired, known)
         handled.add(issue["number"])
     tickets = {i["number"] for i in gh.all("/issues?state=all&labels=factory:ready") if not i.get("pull_request")}
-    for ticket, pr in by_ticket.items():
-        if ticket not in tickets:
-            continue                                       # only PRs for factory tickets
+    for pr in prs:                                         # every PR by an agent or the owner ...
+        if author_of(pr["user"]["login"]) is None:
+            continue
+        ticket = linked_ticket(pr)
+        if ticket is not None and ticket not in tickets:
+            continue                                       # ... except for a ticket the owner took out of the factory
         full = gh.call("GET", f"/pulls/{pr['number']}")
         reviews = gh.all(f"/pulls/{pr['number']}/reviews")
         checks = checks_state(gh.all(f"/commits/{pr['head']['sha']}/check-runs"))
