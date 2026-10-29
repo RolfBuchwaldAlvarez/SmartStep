@@ -56,13 +56,14 @@ LABEL_COLORS = {"next:": "1d76db", "needs:owner": "d93f0b", "step:acceptance": "
 
 def load_config(path: Path) -> dict:
     """The small `key: value` file .github/factory.yml (lists comma-separated)."""
-    config = {"implementers": ["codex"], "judges": ["claude", "hermes"], "judges_per_pr": 2, "max_rounds": 3}
+    config = {"implementers": ["codex"], "judges": ["claude", "hermes"], "judges_per_pr": 2, "max_rounds": 3,
+              "required_checks": []}
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if ":" not in line:
             continue
         key, value = (part.strip() for part in line.split(":", 1))
-        if key in ("judges", "implementers", "implementer"):     # `implementer` is the former single key
+        if key in ("judges", "implementers", "implementer", "required_checks"):     # `implementer` is the former single key
             config["implementers" if key == "implementer" else key] = [v.strip() for v in value.split(",") if v.strip()]
         elif key in ("max_rounds", "judges_per_pr"):
             config[key] = int(value)
@@ -103,11 +104,28 @@ def linked_ticket(pr: dict) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def checks_state(check_runs: list[dict]) -> str:
-    """green, red or pending for the head's check runs (no checks: green)."""
-    if any(c.get("status") != "completed" for c in check_runs):
+OWN_CHECK = "conduct"                                      # the conductor's own job: never CI
+
+
+def checks_state(check_runs: list[dict], required: list[str] = ()) -> str:
+    """green, red or pending for the head's check runs, ignoring the conductor's own job.
+
+    With `required` names, only the latest run of each counts, and a missing one is pending,
+    so a PR whose CI did not run never looks green. Without, every other run counts
+    (no checks: green)."""
+    runs = [c for c in check_runs if c.get("name") != OWN_CHECK]
+    if required:
+        latest = {}
+        for run in runs:
+            if run.get("name") in required:
+                if run.get("name") not in latest or (run.get("started_at") or "") >= (latest[run["name"]].get("started_at") or ""):
+                    latest[run["name"]] = run
+        if len(latest) < len(set(required)):
+            return "pending"
+        runs = list(latest.values())
+    if any(c.get("status") != "completed" for c in runs):
         return "pending"
-    if any(c.get("conclusion") not in ("success", "neutral", "skipped") for c in check_runs):
+    if any(c.get("conclusion") not in ("success", "neutral", "skipped") for c in runs):
         return "red"
     return "green"
 
@@ -240,7 +258,7 @@ def reconcile(gh, config: dict, now: float) -> None:
             continue                                       # ... except for a ticket the owner took out of the factory
         full = gh.call("GET", f"/pulls/{pr['number']}")
         reviews = gh.all(f"/pulls/{pr['number']}/reviews")
-        checks = checks_state(gh.all(f"/commits/{pr['head']['sha']}/check-runs"))
+        checks = checks_state(gh.all(f"/commits/{pr['head']['sha']}/check-runs"), config["required_checks"])
         current = {l["name"] for l in pr["labels"]}
         sync_labels(gh, pr["number"], current, pr_labels(full, reviews, checks, now, config), known)
         handled.add(pr["number"])

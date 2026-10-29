@@ -33,7 +33,7 @@ PROOFREAD = review("codex", body="Proofread: no findings.", commit=OLD)
 class Config(unittest.TestCase):
     def test_factory_yml(self):
         self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
-                                  "judges_per_pr": 2, "max_rounds": 3})
+                                  "judges_per_pr": 2, "max_rounds": 3, "required_checks": []})
 
     def test_former_single_implementer_key(self):
         path = HERE / "_legacy.yml"
@@ -140,6 +140,21 @@ class PullRequest(unittest.TestCase):
         self.assertEqual(self.labels(judged, author="owner"), {"next:judge:hermes"})  # he fixes himself
         approved = [review("claude", "APPROVED"), review("hermes", "APPROVED")]
         self.assertEqual(self.labels(approved, author="owner"), set())             # he merges himself
+
+    def test_the_conductors_own_job_is_no_ci(self):
+        green = {"name": "build", "status": "completed", "conclusion": "success"}
+        for own in ({"status": "in_progress"}, {"status": "completed", "conclusion": "failure"},
+                    {"status": "completed", "conclusion": "cancelled"}):
+            self.assertEqual(c.checks_state([green, dict(own, name="conduct")]), "green")
+
+    def test_required_checks(self):
+        ok = {"name": "android-ci", "status": "completed", "conclusion": "success", "started_at": "2027-01-15T09:00:00Z"}
+        old_red = dict(ok, conclusion="failure", started_at="2027-01-15T08:00:00Z")
+        other_red = {"name": "factory-tests", "status": "completed", "conclusion": "failure"}
+        self.assertEqual(c.checks_state([], ["android-ci"]), "pending")              # CI did not run: never green
+        self.assertEqual(c.checks_state([old_red, ok], ["android-ci"]), "green")     # the latest run counts
+        self.assertEqual(c.checks_state([ok, other_red], ["android-ci"]), "green")   # only the required ones
+        self.assertEqual(c.checks_state([old_red], ["android-ci"]), "red")
 
     def test_checks_state(self):
         self.assertEqual(c.checks_state([]), "green")

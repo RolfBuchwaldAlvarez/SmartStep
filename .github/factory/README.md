@@ -21,6 +21,8 @@ Set in `../factory.yml` (owner decision 2026-10-29):
 
 Judges don't implement tickets. A PR without a ticket (for example the owner's workflow PRs, or changes to the factory itself) is judged the same way.
 
+**CI for the merge:** `required_checks` in `../factory.yml` names the checks that count; a PR without them stays pending. The conductor's own `conduct` job never counts. Until the Android CI workflow exists (build, unit tests, lint), no ticket gets `factory:ready`.
+
 PRs by the owner get no proofread; updating, fixing and merging them stays with him – the conductor only asks the judges.
 
 ## Flow
