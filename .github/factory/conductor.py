@@ -9,7 +9,7 @@ on the head, checks) and sets or removes labels so that they match:
           (implementer:<name> picks one of `implementers`, default the first;
           implementer:owner means the owner implements: no label)
   PR      by an agent or the owner; its judges are the first `judges_per_pr`
-          of `judges` other than its author (the owner's PRs: proofread,
+          of `judges` other than its author (the owner's PRs get no proofread;
           update, fix and merge are his, the conductor only asks the judges)
           conflicts with its base        -> next:update:<author>
           no proofread yet (first hour)  -> next:proofread:<author>
