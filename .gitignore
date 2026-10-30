@@ -12,8 +12,6 @@
 
 # Gradle
 /out/
-/gradle/wrapper/gradle-wrapper.properties
-/gradle/wrapper/gradle-wrapper.jar
 /.gradle/
 
 # IntelliJ IDEA
@@ -27,6 +25,7 @@
 # Java/Kotlin Files
 *.class
 *.jar
+!/gradle/wrapper/gradle-wrapper.jar
 
 # Local Configuration File (SDK Path, etc)
 local.properties
