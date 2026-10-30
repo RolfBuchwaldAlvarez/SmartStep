@@ -16,7 +16,8 @@ CONFIG = c.load_config(HERE.parent / "factory.yml")
 
 
 def pr(author="codex", **extra):
-    base = {"number": 9, "user": {"login": f"{author}-bot-rba[bot]"}, "head": {"sha": HEAD}, "draft": False,
+    login = "RolfBuchwaldAlvarez" if author == "owner" else f"{author}-bot-rba[bot]"
+    base = {"number": 9, "user": {"login": login}, "head": {"sha": HEAD}, "draft": False,
             "created_at": OPENED, "mergeable_state": "clean", "body": "Closes #5"}
     base.update(extra)
     return base
@@ -31,13 +32,39 @@ PROOFREAD = review("codex", body="Proofread: no findings.", commit=OLD)
 
 class Config(unittest.TestCase):
     def test_factory_yml(self):
-        self.assertEqual(CONFIG, {"implementer": "codex", "judges": ["claude", "hermes"], "max_rounds": 3})
+        self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
+                                  "judges_per_pr": 2, "max_rounds": 3, "required_checks": []})
+
+    def test_former_single_implementer_key(self):
+        path = HERE / "_legacy.yml"
+        try:
+            path.write_text("implementer: codex\njudges: claude, hermes\n")
+            self.assertEqual(c.load_config(path)["implementers"], ["codex"])
+        finally:
+            path.unlink()
+
+
+class Judges(unittest.TestCase):
+    def test_nobody_judges_their_own_pr_and_there_are_always_two(self):
+        self.assertEqual(c.judges_for("codex", CONFIG), ["claude", "hermes"])
+        self.assertEqual(c.judges_for("claude", CONFIG), ["hermes", "codex"])
+        self.assertEqual(c.judges_for("owner", CONFIG), ["claude", "hermes"])
+        self.assertEqual(c.judges_for("hermes", CONFIG), ["claude", "codex"])
 
 
 class Ticket(unittest.TestCase):
     def test_implement_until_a_pr_exists(self):
         self.assertEqual(c.ticket_labels(False, CONFIG), {"next:implement:codex"})
         self.assertEqual(c.ticket_labels(True, CONFIG), set())
+
+    def test_implementer_label_picks_another_implementer(self):
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"implementer:claude"})), {"next:implement:claude"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"implementer:owner"})), set())
+
+    def test_unknown_or_ambiguous_implementer_falls_back_to_the_default(self):
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"implementer:hermes"})), {"next:implement:codex"})
+        both = frozenset({"implementer:claude", "implementer:codex"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, both), {"next:implement:codex"})
 
     def test_linked_ticket(self):
         self.assertEqual(c.linked_ticket({"body": "Closes #5\n\nMore."}), 5)
@@ -94,9 +121,44 @@ class PullRequest(unittest.TestCase):
     def test_conflict_update_first(self):
         self.assertEqual(self.labels([PROOFREAD], mergeable_state="dirty"), {"next:update:codex"})
 
-    def test_drafts_and_owner_prs_get_nothing(self):
+    def test_drafts_and_strangers_get_nothing(self):
         self.assertEqual(self.labels([PROOFREAD], draft=True), set())
-        self.assertEqual(c.pr_labels(dict(pr(), user={"login": "RolfBuchwaldAlvarez"}), [], "green", NOW, CONFIG), set())
+        self.assertEqual(c.pr_labels(dict(pr(), user={"login": "someone"}), [], "green", NOW, CONFIG), set())
+
+    def test_claude_as_implementer_is_judged_by_hermes_and_codex(self):
+        proofread = review("claude", body="Proofread: no findings.", commit=OLD)
+        self.assertEqual(self.labels([proofread], author="claude"), {"next:judge:hermes", "next:judge:codex"})
+        approved = [proofread, review("hermes", "APPROVED"), review("codex", "APPROVED")]
+        self.assertEqual(self.labels(approved, author="claude"), {"next:merge:claude"})
+
+    def test_owner_prs_get_judges_only(self):
+        early = c.pr_labels(pr(author="owner"), [], "green", 1_800_000_000.0 + 60, CONFIG)
+        self.assertEqual(early, {"next:judge:claude", "next:judge:hermes"})        # no proofread
+        self.assertEqual(self.labels([], author="owner", mergeable_state="dirty"),
+                         {"next:judge:claude", "next:judge:hermes"})                # he updates himself
+        judged = [review("claude", "APPROVED"), review("hermes")]
+        self.assertEqual(self.labels(judged, author="owner"), {"next:judge:hermes"})  # he fixes himself
+        approved = [review("claude", "APPROVED"), review("hermes", "APPROVED")]
+        self.assertEqual(self.labels(approved, author="owner"), set())             # he merges himself
+
+    def test_the_conductors_own_job_is_no_ci(self):
+        green = {"name": "build", "status": "completed", "conclusion": "success"}
+        for own in ({"status": "in_progress"}, {"status": "completed", "conclusion": "failure"},
+                    {"status": "completed", "conclusion": "cancelled"}):
+            self.assertEqual(c.checks_state([green, dict(own, name="conduct")]), "green")
+
+    def test_required_checks(self):
+        ok = {"id": 101, "name": "android-ci", "status": "completed", "conclusion": "success",
+              "started_at": "2027-01-15T09:00:00Z"}
+        old_red = dict(ok, id=100, conclusion="failure", started_at="2027-01-15T08:00:00Z")
+        other_red = {"name": "factory-tests", "status": "completed", "conclusion": "failure"}
+        self.assertEqual(c.checks_state([], ["android-ci"]), "pending")              # CI did not run: never green
+        self.assertEqual(c.checks_state([old_red, ok], ["android-ci"]), "green")     # the latest run counts
+        self.assertEqual(c.checks_state([ok, other_red], ["android-ci"]), "green")   # only the required ones
+        self.assertEqual(c.checks_state([old_red], ["android-ci"]), "red")
+        queued = {"id": 102, "name": "android-ci", "status": "queued", "started_at": None}
+        for runs in ([ok, queued], [queued, ok]):                                  # a newer run not started yet
+            self.assertEqual(c.checks_state(runs, ["android-ci"]), "pending")
 
     def test_checks_state(self):
         self.assertEqual(c.checks_state([]), "green")
@@ -159,7 +221,7 @@ class Sync(unittest.TestCase):
 
 class Reconcile(unittest.TestCase):
     def run_conductor(self, **kw):
-        gh = FakeGitHub(lists=lists(**kw))
+        gh = FakeGitHub(lists=lists(**kw), prs={p["number"]: p for p in kw.get("open_prs", ())})
         c.reconcile(gh, CONFIG, NOW)
         return gh.calls
 
@@ -170,6 +232,11 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(sorted(p for m, p, _ in calls if m == "DELETE"),
                          ["/issues/5/labels/next%3Aimplement%3Acodex", "/issues/9/labels/next%3Afix%3Acodex"])
         self.assertEqual([p for m, p, _ in calls if m != "DELETE"], [])
+
+    def test_a_pr_without_a_ticket_is_judged_too(self):
+        calls = self.run_conductor(open_prs=[pr(author="owner", body="Moves the workflows.", labels=[])])
+        added = sorted(b["labels"][0] for m, p, b in calls if p == "/issues/9/labels")
+        self.assertEqual(added, ["next:judge:claude", "next:judge:hermes"])
 
     def test_nothing_managed_makes_no_calls(self):
         self.assertEqual(self.run_conductor(open_all=[item(5, "bug")]), [])
