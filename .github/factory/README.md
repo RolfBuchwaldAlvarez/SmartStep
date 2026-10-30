@@ -4,7 +4,7 @@ This repository is a factory repository (`../factory.yml`, my-ai-second-brain#17
 
 - `conductor.py` reads the state from GitHub and sets labels `next:<task>:<agent>`, `needs:owner` and `step:acceptance`; the agents act only on labels addressed to them. Its docstring lists the rules.
 - `test_conductor.py`: `python3 -m unittest discover -s .github/factory`.
-- The workflows, which only the owner can change: `factory-conductor.yml` runs the conductor on every relevant event and every 15 minutes; `factory-tests.yml` runs the tests on PRs that change the factory files. They were drafted in `workflows/` here and live in `.github/workflows/` once the owner moved them (#3).
+- The workflows, which only the owner can change: `factory-conductor.yml` runs the conductor on every relevant event and every 15 minutes; `factory-tests.yml` runs the tests on PRs that change the factory files. They were drafted in `workflows/` here; the owner moved them to `.github/workflows/` in #3.
 
 ## Who implements and who judges
 
@@ -19,7 +19,7 @@ Set in `../factory.yml` (owner decision 2026-10-29):
 | Claude | Hermes, Codex |
 | the owner | Claude, Hermes |
 
-Judges don't implement tickets. A PR without a ticket (for example the owner's workflow PRs, or changes to the factory itself) is judged the same way.
+A PR without a ticket (for example the owner's workflow PRs, or changes to the factory itself) is judged the same way.
 
 **CI for the merge:** `required_checks` in `../factory.yml` names the checks that count; a PR without them stays pending. The conductor's own `conduct` job never counts. Until the Android CI workflow exists (build, unit tests, lint), no ticket gets `factory:ready`.
 
