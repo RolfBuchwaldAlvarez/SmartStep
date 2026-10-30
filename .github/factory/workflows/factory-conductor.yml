@@ -1,0 +1,44 @@
+# Template – the owner copies it over .github/workflows/factory-conductor.yml (agents may not change workflows).
+# Factory conductor (my-ai-second-brain#173): sets the next-step labels.
+name: factory-conductor
+
+on:
+  issues:
+    types: [opened, labeled, unlabeled, closed, reopened]
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft, closed]
+  pull_request_review:
+    types: [submitted, dismissed]
+  # CI results: check_suite never fires for checks created by GitHub Actions.
+  workflow_run:
+    workflows: [android-ci, factory-tests]
+    types: [completed]
+  schedule:
+    - cron: "7,22,37,52 * * * *"      # safety net every 15 minutes
+  workflow_dispatch:
+
+# Labels and comments only. Labels set with this token start no further workflows.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  checks: read
+
+# One run at a time; GitHub keeps only the newest waiting run (harmless: every run reconciles the full state).
+concurrency:
+  group: factory-conductor
+  cancel-in-progress: false
+
+jobs:
+  conduct:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Always the conductor from the default branch, never from a PR's code.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - run: python3 .github/factory/conductor.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

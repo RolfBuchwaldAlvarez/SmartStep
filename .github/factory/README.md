@@ -4,7 +4,7 @@ This repository is a factory repository (`../factory.yml`, my-ai-second-brain#17
 
 - `conductor.py` reads the state from GitHub and sets labels `next:<task>:<agent>`, `needs:owner` and `step:acceptance`; the agents act only on labels addressed to them. Its docstring lists the rules.
 - `test_conductor.py`: `python3 -m unittest discover -s .github/factory`.
-- The workflows, which only the owner can change: `factory-conductor.yml` runs the conductor on every relevant event and every 15 minutes; `factory-tests.yml` runs the tests on PRs that change the factory files. They were drafted in `workflows/` here; the owner moved them to `.github/workflows/` in #3.
+- The workflows, which only the owner can change: `factory-conductor.yml` runs the conductor on every relevant event and every 15 minutes; `factory-tests.yml` runs the tests on PRs that change the factory files. They were drafted in `workflows/` here; the owner moved them to `.github/workflows/` in #3. `workflows/` holds the next drafts the owner moves or copies over: `android-ci.yml` (build, unit tests, Android Lint, ktlint on every PR and on `main`) and a `factory-conductor.yml` that reacts to finished CI runs (`workflow_run`), because `check_suite` never fires for checks created by GitHub Actions.
 
 ## Who implements and who judges
 
