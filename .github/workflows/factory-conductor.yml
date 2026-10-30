@@ -1,4 +1,3 @@
-# Template – the owner moves it to .github/workflows/ (agents may not change workflows).
 # Factory conductor (my-ai-second-brain#173): sets the next-step labels.
 name: factory-conductor
 
@@ -22,7 +21,7 @@ permissions:
   pull-requests: write
   checks: read
 
-# One run at a time; a newer event waits instead of cancelling.
+# One run at a time; GitHub keeps only the newest waiting run (harmless: every run reconciles the full state).
 concurrency:
   group: factory-conductor
   cancel-in-progress: false
