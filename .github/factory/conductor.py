@@ -118,7 +118,8 @@ def checks_state(check_runs: list[dict], required: list[str] = ()) -> str:
         latest = {}
         for run in runs:
             if run.get("name") in required:
-                if run.get("name") not in latest or (run.get("started_at") or "") >= (latest[run["name"]].get("started_at") or ""):
+                # Check-run ids grow with creation; a queued run has no start time yet (Codex, #4).
+                if run.get("name") not in latest or run.get("id", 0) > latest[run["name"]].get("id", 0):
                     latest[run["name"]] = run
         if len(latest) < len(set(required)):
             return "pending"

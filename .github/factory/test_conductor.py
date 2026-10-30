@@ -148,13 +148,17 @@ class PullRequest(unittest.TestCase):
             self.assertEqual(c.checks_state([green, dict(own, name="conduct")]), "green")
 
     def test_required_checks(self):
-        ok = {"name": "android-ci", "status": "completed", "conclusion": "success", "started_at": "2027-01-15T09:00:00Z"}
-        old_red = dict(ok, conclusion="failure", started_at="2027-01-15T08:00:00Z")
+        ok = {"id": 101, "name": "android-ci", "status": "completed", "conclusion": "success",
+              "started_at": "2027-01-15T09:00:00Z"}
+        old_red = dict(ok, id=100, conclusion="failure", started_at="2027-01-15T08:00:00Z")
         other_red = {"name": "factory-tests", "status": "completed", "conclusion": "failure"}
         self.assertEqual(c.checks_state([], ["android-ci"]), "pending")              # CI did not run: never green
         self.assertEqual(c.checks_state([old_red, ok], ["android-ci"]), "green")     # the latest run counts
         self.assertEqual(c.checks_state([ok, other_red], ["android-ci"]), "green")   # only the required ones
         self.assertEqual(c.checks_state([old_red], ["android-ci"]), "red")
+        queued = {"id": 102, "name": "android-ci", "status": "queued", "started_at": None}
+        for runs in ([ok, queued], [queued, ok]):                                  # a newer run not started yet
+            self.assertEqual(c.checks_state(runs, ["android-ci"]), "pending")
 
     def test_checks_state(self):
         self.assertEqual(c.checks_state([]), "green")
