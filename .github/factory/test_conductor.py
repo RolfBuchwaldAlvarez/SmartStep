@@ -73,7 +73,11 @@ class Ticket(unittest.TestCase):
         self.assertEqual(c.ticket_labels(False, CONFIG), {"needs:points"})
         self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:4"})), {"needs:points"})   # not Fibonacci
         self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:8"})), {"next:implement:codex", "level:8"})
-        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:13"})), {"needs:split"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:13"})), {"next:split:codex", "level:13"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:21", "implementer:claude"})),
+                         {"next:split:claude", "level:21"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:21", "split:done"})), set())
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:13", "implementer:owner"})), set())
         self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:3", "points:5"})), {"needs:points"})
 
 

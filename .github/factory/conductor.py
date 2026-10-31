@@ -25,7 +25,9 @@ on the head, checks) and sets or removes labels so that they match:
           factory:ready                  -> none of the conductor's labels
 
 Complexity routing (routing.py, olympus-agents docs/complexity-routing.md):
-a ticket needs points:<n> (else needs:points; 13 or more: needs:split); the
+a ticket needs points:<n> (else needs:points); 13 or 21 points: the implementer
+splits it first (next:split:<agent> with level:<points>; it creates child tickets
+of at most 8 points for the owner to approve and marks the ticket split:done); the
 implement and fix labels come with level:<n> for the run's model and effort;
 judge labels on a risky diff come with risk:high; evidence that a round was too
 weak raises an escalation floor (state comment on the PR); points or a floor
@@ -157,7 +159,8 @@ def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset()) -
     if points is None:
         return {"needs:points"}
     if points >= routing.SPLIT_AT:
-        return {"needs:split"}
+        # Splitting is a task too, at the strength the complexity calls for (owner decision 2026-10-31).
+        return set() if "split:done" in labels else {f"next:split:{implementer}", f"level:{points}"}
     return {f"next:implement:{implementer}", f"level:{points}"}
 
 
