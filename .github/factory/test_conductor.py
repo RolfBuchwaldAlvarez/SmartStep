@@ -34,7 +34,8 @@ P3 = frozenset({"points:3"})
 class Config(unittest.TestCase):
     def test_factory_yml(self):
         self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
-                                  "judges_per_pr": 2, "max_rounds": 3, "required_checks": ["android-ci"]})
+                                  "judges_per_pr": 2, "max_rounds": 3, "required_checks": ["android-ci"],
+                                  "estimators": ["codex", "claude"]})
 
     def test_former_single_implementer_key(self):
         path = HERE / "_legacy.yml"
@@ -73,8 +74,61 @@ class Ticket(unittest.TestCase):
         self.assertEqual(c.ticket_labels(False, CONFIG), {"needs:points"})
         self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:4"})), {"needs:points"})   # not Fibonacci
         self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:8"})), {"next:implement:codex", "level:8"})
-        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:13"})), {"needs:split"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:13"})), {"next:split:codex", "level:13"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:21", "implementer:claude"})),
+                         {"next:split:claude", "level:21"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:21", "split:done"})), set())
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:13", "implementer:owner"})), set())
         self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:3", "points:5"})), {"needs:points"})
+
+
+class Poker(unittest.TestCase):
+    def test_both_estimate_independently(self):
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {"codex": None, "claude": None}),
+                         ({"next:estimate:codex", "next:estimate:claude"}, None))
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {"codex": 3, "claude": None}),
+                         ({"next:estimate:claude"}, None))
+
+    def test_one_step_apart_takes_the_higher(self):
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {"codex": 3, "claude": 5}), (set(), 5))
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {"codex": 8, "claude": 8}), (set(), 8))
+
+    def test_further_apart_goes_to_the_owner(self):
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {"codex": 2, "claude": 8}), ({"needs:estimate"}, None))
+
+    def test_nothing_once_points_exist(self):
+        self.assertEqual(c.estimate_labels({"factory:estimate", "points:5"}, {"codex": None, "claude": None}),
+                         (set(), None))
+
+    def test_conflicting_or_invalid_points_go_to_the_owner(self):
+        for labels in ({"factory:estimate", "points:3", "points:5"}, {"factory:estimate", "points:4"}):
+            self.assertEqual(c.estimate_labels(labels, {"codex": 3, "claude": 5}), ({"needs:points"}, None))
+
+    def test_fewer_than_two_estimators_go_to_the_owner(self):
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {"codex": 5}), ({"needs:estimate"}, None))
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {}), ({"needs:estimate"}, None))
+
+    def test_reconcile_does_not_repeat_poker_on_conflicting_points(self):
+        comments = [{"user": {"login": "codex-bot-rba[bot]"}, "body": "Estimate: 3 – two layers, known pattern"},
+                    {"user": {"login": "claude-bot-rba[bot]"}, "body": "Estimate: 5 – three layers and a Room table"}]
+        for extra, writes in (((), 2), (("needs:points",), 0)):      # first run: the label and its comment; then nothing
+            ticket = item(5, "factory:estimate", "points:3", "points:5", *extra)
+            gh = FakeGitHub(lists=dict(lists(open_all=[ticket]), **{
+                "/issues?state=open&labels=factory:estimate": [ticket], "/issues/5/comments": comments}))
+            c.reconcile(gh, CONFIG, NOW)
+            on_ticket = [(m, p, b) for m, p, b in gh.calls if p.startswith("/issues/5/")]
+            self.assertFalse(any("Planning poker" in str(b) or "points:5" in str(b) for m, p, b in on_ticket))
+            self.assertEqual(len(on_ticket), writes, on_ticket)
+
+    def test_reconcile_sets_the_points_and_asks_the_owner(self):
+        ticket = item(5, "factory:estimate")
+        comments = [{"user": {"login": "codex-bot-rba[bot]"}, "body": "Estimate: 3 – two layers, known pattern"},
+                    {"user": {"login": "claude-bot-rba[bot]"}, "body": "Estimate: 5 – three layers and a Room table"}]
+        gh = FakeGitHub(lists=dict(lists(open_all=[ticket]), **{
+            "/issues?state=open&labels=factory:estimate": [ticket], "/issues/5/comments": comments}))
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertIn(("POST", "/issues/5/labels", {"labels": ["points:5"]}), gh.calls)
+        self.assertTrue(any(p == "/issues/5/comments" and "Planning poker" in b["body"] for m, p, b in gh.calls))
 
 
 class Routed(unittest.TestCase):
