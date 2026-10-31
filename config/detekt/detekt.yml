@@ -1,0 +1,7 @@
+# detekt configuration for SmartStep, on top of detekt's default configuration
+# (`buildUponDefaultConfig = true` in app/build.gradle.kts). Only deviations live here, each with its reason.
+
+naming:
+  FunctionNaming:
+    # Composable functions are named like types (PascalCase), the Compose convention.
+    ignoreAnnotated: ['Composable']
