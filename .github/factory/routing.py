@@ -24,7 +24,7 @@ SPLIT_AT = 13
 MIN_LEVEL = 2
 STATE_MARK = "<!-- factory-state "
 SEVERITIES = ("minor", "major", "critical")
-# Explicit tags first; Codex' P0-P3 as a fallback (P0 critical, P1-P2 major, P3 minor).
+# Explicit tags first; Codex's P0-P3 as a fallback (P0 critical, P1-P2 major, P3 minor).
 TAG = re.compile(r"\[(critical|major|minor|blocking|non-blocking|p[0-3])\]", re.IGNORECASE)
 TAG_SEVERITY = {"critical": "critical", "p0": "critical", "major": "major", "blocking": "major", "p1": "major",
                 "p2": "major", "minor": "minor", "non-blocking": "minor", "p3": "minor"}
