@@ -28,6 +28,7 @@ def review(agent, state="COMMENTED", commit=HEAD, body="Round 1: findings."):
 
 
 PROOFREAD = review("codex", body="Proofread: no findings.", commit=OLD)
+P3 = frozenset({"points:3"})
 
 
 class Config(unittest.TestCase):
@@ -54,17 +55,41 @@ class Judges(unittest.TestCase):
 
 class Ticket(unittest.TestCase):
     def test_implement_until_a_pr_exists(self):
-        self.assertEqual(c.ticket_labels(False, CONFIG), {"next:implement:codex"})
-        self.assertEqual(c.ticket_labels(True, CONFIG), set())
+        self.assertEqual(c.ticket_labels(False, CONFIG, P3), {"next:implement:codex", "level:3"})
+        self.assertEqual(c.ticket_labels(True, CONFIG, P3), set())
 
     def test_implementer_label_picks_another_implementer(self):
-        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"implementer:claude"})), {"next:implement:claude"})
-        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"implementer:owner"})), set())
+        self.assertEqual(c.ticket_labels(False, CONFIG, P3 | {"implementer:claude"}),
+                         {"next:implement:claude", "level:3"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, P3 | {"implementer:owner"}), set())
 
     def test_unknown_or_ambiguous_implementer_falls_back_to_the_default(self):
-        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"implementer:hermes"})), {"next:implement:codex"})
-        both = frozenset({"implementer:claude", "implementer:codex"})
-        self.assertEqual(c.ticket_labels(False, CONFIG, both), {"next:implement:codex"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, P3 | {"implementer:hermes"}),
+                         {"next:implement:codex", "level:3"})
+        both = P3 | {"implementer:claude", "implementer:codex"}
+        self.assertEqual(c.ticket_labels(False, CONFIG, both), {"next:implement:codex", "level:3"})
+
+    def test_points_decide_whether_and_at_which_level(self):
+        self.assertEqual(c.ticket_labels(False, CONFIG), {"needs:points"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:4"})), {"needs:points"})   # not Fibonacci
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:8"})), {"next:implement:codex", "level:8"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:13"})), {"needs:split"})
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:3", "points:5"})), {"needs:points"})
+
+
+class Routed(unittest.TestCase):
+    def test_fix_level_follows_severity_and_floor(self):
+        fix = {"next:fix:codex", "next:judge:hermes"}
+        self.assertIn("level:2", c.routed(fix, 8, 0, "minor", "normal"))
+        self.assertIn("level:5", c.routed(fix, 8, 0, "major", "normal"))
+        self.assertIn("level:8", c.routed(fix, 8, 0, "critical", "normal"))
+        self.assertIn("level:8", c.routed(fix, 8, 8, "minor", "normal"))           # the floor wins
+        self.assertEqual(c.routed(fix, 8, 13, "minor", "normal"), {"needs:split"})
+
+    def test_risk_only_with_judges_and_no_level_without_points(self):
+        self.assertEqual(c.routed({"next:judge:claude"}, None, 0, "major", "high"), {"next:judge:claude", "risk:high"})
+        self.assertEqual(c.routed({"next:merge:codex"}, 5, 0, "major", "high"), {"next:merge:codex"})
+        self.assertEqual(c.routed({"next:fix:codex"}, None, 0, "critical", "normal"), {"next:fix:codex"})
 
     def test_linked_ticket(self):
         self.assertEqual(c.linked_ticket({"body": "Closes #5\n\nMore."}), 5)
@@ -232,6 +257,20 @@ class Reconcile(unittest.TestCase):
         self.assertEqual(sorted(p for m, p, _ in calls if m == "DELETE"),
                          ["/issues/5/labels/next%3Aimplement%3Acodex", "/issues/9/labels/next%3Afix%3Acodex"])
         self.assertEqual([p for m, p, _ in calls if m != "DELETE"], [])
+
+    def test_fix_round_level_from_findings_and_state_comment(self):
+        ticket = item(5, "factory:ready", "points:8")
+        judged = [dict(PROOFREAD, id=1), dict(review("claude", "APPROVED"), id=2), dict(review("hermes"), id=3)]
+        open_pr = pr(labels=[])
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_prs=[open_pr]), **{
+            "/pulls/9/reviews": judged,
+            "/pulls/9/reviews/3/comments": [{"body": "[critical] the step count is lost on rotation"}]}),
+            prs={9: open_pr})
+        c.reconcile(gh, CONFIG, NOW)
+        added = sorted(b["labels"][0] for m, p, b in gh.calls if p == "/issues/9/labels")
+        self.assertEqual(added, ["level:8", "next:fix:codex", "next:judge:hermes"])
+        state = [b["body"] for m, p, b in gh.calls if m == "POST" and p == "/issues/9/comments"]
+        self.assertTrue(state and state[0].startswith("<!-- factory-state "))
 
     def test_a_pr_without_a_ticket_is_judged_too(self):
         calls = self.run_conductor(open_prs=[pr(author="owner", body="Moves the workflows.", labels=[])])
