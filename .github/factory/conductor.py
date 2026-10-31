@@ -294,7 +294,7 @@ def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], 
         labels = routed(desired, points, floor, severity, "normal")
         fix = next((l for l in labels if l.startswith("level:")), None)
         state["next_level"] = int(fix.split(":", 1)[1]) if fix else state.get("next_level")
-        if state != routing.advance(before, points, head, False) or comment_id is None:
+        if state != before or comment_id is None:
             body = routing.render_state(state)
             if comment_id is None:
                 gh.call("POST", f"/issues/{number}/comments", {"body": body})

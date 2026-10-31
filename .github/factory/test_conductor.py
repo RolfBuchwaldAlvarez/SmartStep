@@ -272,6 +272,16 @@ class Reconcile(unittest.TestCase):
         state = [b["body"] for m, p, b in gh.calls if m == "POST" and p == "/issues/9/comments"]
         self.assertTrue(state and state[0].startswith("<!-- factory-state "))
 
+    def test_the_head_a_fix_round_produced_is_written_even_without_a_new_fix_label(self):
+        before = {"floor": 0, "head": OLD, "levels": {}, "next_level": 5, "signaled": []}
+        gh = FakeGitHub(lists={"/issues/9/comments": [{"id": 4, "body": c.routing.render_state(before)}]})
+        c.route_pr(gh, pr(), [], "pending", set(), {"next:judge:claude", "next:judge:hermes"}, 8, CONFIG)
+        written = [b["body"] for m, p, b in gh.calls if (m, p) == ("PATCH", "/issues/comments/4")]
+        self.assertEqual(c.routing.read_state([{"id": 4, "body": b} for b in written])[1]["levels"], {HEAD: 5})
+        again = FakeGitHub(lists={"/issues/9/comments": [{"id": 4, "body": written[0]}]})
+        c.route_pr(again, pr(), [], "pending", set(), {"next:judge:claude", "next:judge:hermes"}, 8, CONFIG)
+        self.assertEqual([m for m, p, _ in again.calls if p.startswith("/issues/comments")], [])
+
     def test_a_pr_without_a_ticket_is_judged_too(self):
         calls = self.run_conductor(open_prs=[pr(author="owner", body="Moves the workflows.", labels=[])])
         added = sorted(b["labels"][0] for m, p, b in calls if p == "/issues/9/labels")
