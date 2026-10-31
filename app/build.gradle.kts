@@ -13,7 +13,7 @@ plugins {
 android {
     namespace = "com.akcrba.smartstep"
     compileSdk {
-        version = release(36)
+        version = release(37)
     }
 
     defaultConfig {
