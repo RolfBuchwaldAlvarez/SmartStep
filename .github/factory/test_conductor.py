@@ -100,6 +100,26 @@ class Poker(unittest.TestCase):
         self.assertEqual(c.estimate_labels({"factory:estimate", "points:5"}, {"codex": None, "claude": None}),
                          (set(), None))
 
+    def test_conflicting_or_invalid_points_go_to_the_owner(self):
+        for labels in ({"factory:estimate", "points:3", "points:5"}, {"factory:estimate", "points:4"}):
+            self.assertEqual(c.estimate_labels(labels, {"codex": 3, "claude": 5}), ({"needs:points"}, None))
+
+    def test_fewer_than_two_estimators_go_to_the_owner(self):
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {"codex": 5}), ({"needs:estimate"}, None))
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {}), ({"needs:estimate"}, None))
+
+    def test_reconcile_does_not_repeat_poker_on_conflicting_points(self):
+        comments = [{"user": {"login": "codex-bot-rba[bot]"}, "body": "Estimate: 3 – two layers, known pattern"},
+                    {"user": {"login": "claude-bot-rba[bot]"}, "body": "Estimate: 5 – three layers and a Room table"}]
+        for extra, writes in (((), 2), (("needs:points",), 0)):      # first run: the label and its comment; then nothing
+            ticket = item(5, "factory:estimate", "points:3", "points:5", *extra)
+            gh = FakeGitHub(lists=dict(lists(open_all=[ticket]), **{
+                "/issues?state=open&labels=factory:estimate": [ticket], "/issues/5/comments": comments}))
+            c.reconcile(gh, CONFIG, NOW)
+            on_ticket = [(m, p, b) for m, p, b in gh.calls if p.startswith("/issues/5/")]
+            self.assertFalse(any("Planning poker" in str(b) or "points:5" in str(b) for m, p, b in on_ticket))
+            self.assertEqual(len(on_ticket), writes, on_ticket)
+
     def test_reconcile_sets_the_points_and_asks_the_owner(self):
         ticket = item(5, "factory:estimate")
         comments = [{"user": {"login": "codex-bot-rba[bot]"}, "body": "Estimate: 3 – two layers, known pattern"},

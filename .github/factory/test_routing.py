@@ -107,6 +107,9 @@ class PlanningPoker(unittest.TestCase):
         self.assertEqual(r.estimate_of("**Estimate:** 8 – cross-cutting"), 8)   # bold is fine
         self.assertEqual(r.estimate_of("Estimate: 4"), None)              # not a Fibonacci value
         self.assertEqual(r.estimate_of("I estimate 5"), None)
+        # Quoting or restating another estimator's vote is not a vote of one's own.
+        self.assertEqual(r.estimate_of("> Estimate: 5 – quoting Claude\nI have not estimated this yet."), None)
+        self.assertEqual(r.estimate_of("## Estimate: 5"), None)
 
     def test_poker(self):
         self.assertEqual(r.poker({"a": 3, "b": None}), ("open", None))

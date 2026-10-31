@@ -8,7 +8,8 @@ Pure functions; the conductor calls them and writes the results as labels:
                  to a model and an effort (`levels` in olympus-agents' agents.json)
   risk:high      the judges run at high effort (risky files in the diff)
   needs:points   a factory:ready ticket without a valid points label
-  needs:split    13 or more points, at the start or after escalation
+  needs:split    an agent's PR escalated to 13 or more points (a ticket of 13 or 21
+                 points is split by its implementer instead: next:split)
 
 The escalation floor lives in a state comment the conductor keeps on the PR, so
 re-running the conductor never raises it twice for the same evidence.
@@ -148,11 +149,11 @@ def signal_at(head: str, checks: str, reviews_by_judge: dict, underestimated: bo
 
 # ------------------------------------------------------------ planning poker
 
-ESTIMATE = re.compile(r"^[\s*_#>]*Estimate:[\s*_]*(\d+)", re.IGNORECASE)
+ESTIMATE = re.compile(r"^[\s*_]*Estimate:[\s*_]*(\d+)", re.IGNORECASE)
 
 
 def estimate_of(body: str) -> int | None:
-    """The points of an `Estimate: <n> – reasoning` comment, if n is a Fibonacci value."""
+    """The points of a comment starting `Estimate: <n> – reasoning`, if n is a Fibonacci value (not quoted)."""
     match = ESTIMATE.match(body or "")
     return int(match.group(1)) if match and int(match.group(1)) in FIB else None
 

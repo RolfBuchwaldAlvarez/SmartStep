@@ -73,10 +73,12 @@ NEEDS_COMMENTS = {
     "needs:owner": "a judge reached the round limit without approving. The agents pause until you decide.",
     "needs:points": "this ticket has no valid `points:<n>` label (1, 2, 3, 5, 8, 13 or 21). "
                     "Nothing is implemented until it has one.",
-    "needs:estimate": "the planning-poker estimates differ by more than one Fibonacci step (see the Estimate "
-                      "comments). Please set the points:<n> label yourself.",
-    "needs:split": "this is estimated or escalated at 13 points or more: too uncertain for one PR. "
-                   "Please split it into tickets of at most 8 points. The agents pause here.",
+    "needs:estimate": "planning poker has no result: the estimates differ by more than one Fibonacci step "
+                      "(see the Estimate comments), or `estimators` in factory.yml names fewer than two agents. "
+                      "Please set the points:<n> label yourself.",
+    "needs:split": "this PR was escalated to 13 points or more: too uncertain for one PR. The agents pause here. "
+                   "To go on, close it and set the ticket's points to 13 or 21: its implementer then splits it "
+                   "into tickets of at most 8 points for you to approve.",
 }
 
 
@@ -174,8 +176,11 @@ def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset()) -
 
 def estimate_labels(labels: set[str], estimates: dict) -> tuple[set[str], int | None]:
     """Planning poker on a `factory:estimate` ticket without points: (labels, points to set or None). Pure."""
-    if routing.points_of(labels) is not None:
-        return set(), None
+    if any(l.startswith("points:") for l in labels):
+        # Valid points end the poker; conflicting or invalid ones go to the owner, not into another round.
+        return (set() if routing.points_of(labels) is not None else {"needs:points"}), None
+    if len(estimates) < 2:
+        return {"needs:estimate"}, None                    # one estimator is no poker
     state, points = routing.poker(estimates)
     if state == "open":
         return {f"next:estimate:{agent}" for agent, value in estimates.items() if value is None}, None
