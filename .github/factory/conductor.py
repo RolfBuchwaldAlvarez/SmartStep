@@ -28,8 +28,8 @@ Complexity routing (routing.py, olympus-agents docs/complexity-routing.md):
 a ticket needs points:<n> (else needs:points; 13 or more: needs:split); the
 implement and fix labels come with level:<n> for the run's model and effort;
 judge labels on a risky diff come with risk:high; evidence that a round was too
-weak raises an escalation floor (state comment on the PR); a floor of 13 or
-more stops the PR with needs:split.
+weak raises an escalation floor (state comment on the PR); points or a floor
+of 13 or more stop an agent's PR with needs:split, unless needs:owner stands.
 
 The agents' pollers act on the next:* labels addressed to them and decide the
 details (rounds, re-checks, one run at a time). Re-running changes nothing.
@@ -164,7 +164,9 @@ def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset()) -
 def routed(labels: set[str], points: int | None, floor: int, severity: str, risk: str) -> set[str]:
     """Add complexity routing to a PR's labels from pr_labels. Pure."""
     labels = set(labels)
-    if points is not None and floor >= routing.SPLIT_AT:
+    if "needs:owner" in labels:                            # the pipeline's stop comes first
+        return labels
+    if points is not None and (points >= routing.SPLIT_AT or floor >= routing.SPLIT_AT):
         return {"needs:split"}
     if points is not None and any(l.startswith("next:fix:") for l in labels):
         labels.add(f"level:{routing.fix_level(points, severity, floor)}")
@@ -275,10 +277,12 @@ def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], 
     """Complexity routing for one PR: findings' severity, risk, escalation floor (state comment)."""
     number, head = pr["number"], pr["head"]["sha"]
     author = author_of(pr["user"]["login"])
+    if author == "owner":
+        points = None                                      # his PRs: no levels, no split, no state comment
     real = [r for r in reviews if is_real(r)]
     by_judge = {j: [r for r in real if agent_of(r["user"]["login"]) == j] for j in judges_for(author, config)}
     floor, severity = 0, "major"
-    if points is not None and author != "owner":
+    if points is not None:
         comment_id, before = routing.read_state(gh.all(f"/issues/{number}/comments"))
         state = routing.advance(before, points, head, False)
         signal = routing.signal_at(head, checks, by_judge, "complexity:underestimated" in current,
@@ -287,13 +291,14 @@ def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], 
         floor = state["floor"]
         open_reviews = [r for rs in by_judge.values() for r in rs[-1:]
                         if r.get("commit_id") == head and r.get("state") != "APPROVED"]
-        texts = [r.get("body") or "" for r in open_reviews]
+        findings = []
         for r in open_reviews:
-            texts += [c.get("body") or "" for c in gh.all(f"/pulls/{number}/reviews/{r['id']}/comments")]
-        severity = routing.severity_of(texts)
+            comments = [c.get("body") for c in gh.all(f"/pulls/{number}/reviews/{r['id']}/comments")]
+            findings += routing.review_findings(r.get("body"), comments)
+        severity = routing.severity_of(findings)
         labels = routed(desired, points, floor, severity, "normal")
         fix = next((l for l in labels if l.startswith("level:")), None)
-        state["next_level"] = int(fix.split(":", 1)[1]) if fix else state.get("next_level")
+        state["next_level"] = int(fix.split(":", 1)[1]) if fix else None   # no fix due: no head to expect
         if state != before or comment_id is None:
             body = routing.render_state(state)
             if comment_id is None:
@@ -336,7 +341,7 @@ def reconcile(gh, config: dict, now: float) -> None:
         checks = checks_state(gh.all(f"/commits/{pr['head']['sha']}/check-runs"), config["required_checks"])
         current = {l["name"] for l in pr["labels"]}
         desired = pr_labels(full, reviews, checks, now, config)
-        if desired:
+        if not full.get("draft"):                          # also with nothing due, to record a fix round's head
             desired = route_pr(gh, full, reviews, checks, current, desired, ticket_points.get(ticket), config)
         sync_labels(gh, pr["number"], current, desired, known)
         handled.add(pr["number"])

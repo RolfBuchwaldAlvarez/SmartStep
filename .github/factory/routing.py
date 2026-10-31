@@ -23,13 +23,14 @@ FIB = (1, 2, 3, 5, 8, 13, 21)
 SPLIT_AT = 13
 MIN_LEVEL = 2
 STATE_MARK = "<!-- factory-state "
+STATE_WRITER = "github-actions[bot]"                       # the conductor's workflow token
 SEVERITIES = ("minor", "major", "critical")
 # Explicit tags first; Codex's P0-P3 as a fallback (P0 critical, P1-P2 major, P3 minor).
 TAG = re.compile(r"\[(critical|major|minor|blocking|non-blocking|p[0-3])\]", re.IGNORECASE)
 TAG_SEVERITY = {"critical": "critical", "p0": "critical", "major": "major", "blocking": "major", "p1": "major",
                 "p2": "major", "minor": "minor", "non-blocking": "minor", "p3": "minor"}
 RISKY = re.compile(r"(\.gradle(\.kts)?$|gradle\.properties$|(^|/)gradle/|libs\.versions\.toml$|AndroidManifest\.xml$|"
-                   r"(^|/)schemas/|migration|\.sql$|(^|/)\.github/|security|crypto|auth)", re.IGNORECASE)
+                   r"(^|/)schemas/|migration|\.sql$|(^|/)\.github/|security|crypto|auth(?!or(?!i[sz])))", re.IGNORECASE)
 RISKY_FILE_COUNT = 20
 
 
@@ -52,12 +53,20 @@ def step_below(n: int) -> int:
     return max(lower[-1] if lower else MIN_LEVEL, MIN_LEVEL)
 
 
-def severity_of(texts) -> str:
-    """The highest tagged severity in the open findings; untagged findings count as major."""
-    found = [TAG_SEVERITY[m.lower()] for text in texts for m in TAG.findall(text or "")]
-    if not found:
-        return "major"
-    return max(found, key=SEVERITIES.index)
+def severity_of(findings) -> str:
+    """The highest severity of the open findings, one text per finding; an untagged finding counts as major."""
+    found = []
+    for text in findings:
+        tags = [TAG_SEVERITY[m.lower()] for m in TAG.findall(text or "")]
+        found.append(max(tags, key=SEVERITIES.index) if tags else "major")
+    return max(found, key=SEVERITIES.index) if found else "major"
+
+
+def review_findings(body: str, comments) -> list[str]:
+    """A review's findings: its inline comments, plus its body if the body is tagged or stands alone.
+    An untagged body next to inline comments is the review's summary, not a finding."""
+    comments = [c or "" for c in comments]
+    return comments + [body or ""] if not comments or TAG.search(body or "") else comments
 
 
 def fix_level(points: int, severity: str, floor: int = 0) -> int:
@@ -73,15 +82,31 @@ def risk_of(filenames) -> str:
 
 # ------------------------------------------------------------ state comment
 
+def valid_state(state) -> bool:
+    """The shape render_state writes: anything else is ignored, never used or overwritten."""
+    def level(v):
+        return isinstance(v, int) and not isinstance(v, bool)
+    return (isinstance(state, dict) and set(state) == {"floor", "head", "levels", "next_level", "signaled"}
+            and level(state["floor"]) and (state["head"] is None or isinstance(state["head"], str))
+            and isinstance(state["levels"], dict)
+            and all(isinstance(k, str) and level(v) for k, v in state["levels"].items())
+            and (state["next_level"] is None or level(state["next_level"]))
+            and isinstance(state["signaled"], list) and all(isinstance(h, str) for h in state["signaled"]))
+
+
 def read_state(comments) -> tuple[int | None, dict]:
-    """(comment id, state) of the conductor's state comment on a PR, or (None, empty state)."""
+    """(comment id, state) of the conductor's state comment on a PR, or (None, empty state).
+    Only a comment by the conductor's own identity with a valid state counts; anyone can comment."""
     for comment in comments:
         body = comment.get("body") or ""
-        if body.startswith(STATE_MARK):
-            try:
-                return comment["id"], json.loads(body[len(STATE_MARK):body.index(" -->")])
-            except (ValueError, KeyError):
-                return comment.get("id"), {}
+        if (comment.get("user") or {}).get("login") != STATE_WRITER or not body.startswith(STATE_MARK):
+            continue
+        try:
+            state = json.loads(body[len(STATE_MARK):body.index(" -->")])
+        except ValueError:
+            continue
+        if valid_state(state) and "id" in comment:
+            return comment["id"], state
     return None, {}
 
 

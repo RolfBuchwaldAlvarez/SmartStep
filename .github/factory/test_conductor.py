@@ -86,6 +86,14 @@ class Routed(unittest.TestCase):
         self.assertIn("level:8", c.routed(fix, 8, 8, "minor", "normal"))           # the floor wins
         self.assertEqual(c.routed(fix, 8, 13, "minor", "normal"), {"needs:split"})
 
+    def test_a_ticket_of_13_points_stops_its_open_pr_too(self):
+        self.assertEqual(c.routed({"next:fix:codex", "next:judge:hermes"}, 13, 0, "major", "normal"), {"needs:split"})
+        self.assertEqual(c.routed(set(), 13, 0, "major", "normal"), {"needs:split"})
+
+    def test_needs_owner_stays_ahead_of_the_split(self):
+        self.assertEqual(c.routed({"needs:owner"}, 8, 13, "major", "normal"), {"needs:owner"})
+        self.assertEqual(c.routed({"needs:owner"}, 13, 0, "major", "normal"), {"needs:owner"})
+
     def test_risk_only_with_judges_and_no_level_without_points(self):
         self.assertEqual(c.routed({"next:judge:claude"}, None, 0, "major", "high"), {"next:judge:claude", "risk:high"})
         self.assertEqual(c.routed({"next:merge:codex"}, 5, 0, "major", "high"), {"next:merge:codex"})
@@ -192,6 +200,14 @@ class PullRequest(unittest.TestCase):
         self.assertEqual(c.checks_state([{"status": "completed", "conclusion": "failure"}]), "red")
 
 
+def state_comment(state=None, body=None):
+    return {"id": 4, "user": {"login": "github-actions[bot]"}, "body": body or c.routing.render_state(state)}
+
+
+def stored(bodies):
+    return c.routing.read_state([state_comment(body=b) for b in bodies])[1]
+
+
 class FakeGitHub:
     def __init__(self, labels=(), lists=None, prs=None):
         self.calls, self.labels = [], set(labels)
@@ -274,13 +290,39 @@ class Reconcile(unittest.TestCase):
 
     def test_the_head_a_fix_round_produced_is_written_even_without_a_new_fix_label(self):
         before = {"floor": 0, "head": OLD, "levels": {}, "next_level": 5, "signaled": []}
-        gh = FakeGitHub(lists={"/issues/9/comments": [{"id": 4, "body": c.routing.render_state(before)}]})
+        gh = FakeGitHub(lists={"/issues/9/comments": [state_comment(before)]})
         c.route_pr(gh, pr(), [], "pending", set(), {"next:judge:claude", "next:judge:hermes"}, 8, CONFIG)
         written = [b["body"] for m, p, b in gh.calls if (m, p) == ("PATCH", "/issues/comments/4")]
-        self.assertEqual(c.routing.read_state([{"id": 4, "body": b} for b in written])[1]["levels"], {HEAD: 5})
-        again = FakeGitHub(lists={"/issues/9/comments": [{"id": 4, "body": written[0]}]})
+        self.assertEqual(stored(written)["levels"], {HEAD: 5})
+        again = FakeGitHub(lists={"/issues/9/comments": [state_comment(body=written[0])]})
         c.route_pr(again, pr(), [], "pending", set(), {"next:judge:claude", "next:judge:hermes"}, 8, CONFIG)
         self.assertEqual([m for m, p, _ in again.calls if p.startswith("/issues/comments")], [])
+
+    def test_the_fix_head_is_recorded_when_nothing_is_due(self):
+        # Both judges approve the fix's head while CI runs: no label, but the state must learn the head.
+        ticket = item(5, "factory:ready", "points:8")
+        judged = [dict(PROOFREAD, id=1), dict(review("claude", "APPROVED"), id=2), dict(review("hermes", "APPROVED"), id=3)]
+        open_pr = pr(labels=[])
+        before = {"floor": 0, "head": OLD, "levels": {}, "next_level": 5, "signaled": []}
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_prs=[open_pr]), **{
+            "/pulls/9/reviews": judged, "/issues/9/comments": [state_comment(before)],
+            f"/commits/{HEAD}/check-runs": [{"name": "build", "status": "in_progress"}]}), prs={9: open_pr})
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertFalse([p for m, p, _ in gh.calls if p == "/issues/9/labels"])
+        written = [b["body"] for m, p, b in gh.calls if (m, p) == ("PATCH", "/issues/comments/4")]
+        self.assertEqual((stored(written)["levels"], stored(written)["next_level"]), ({HEAD: 5}, None))
+
+    def test_a_canceled_fix_expects_no_head(self):
+        # The fix is stopped by needs:owner; a later owner push must not count as that fix round.
+        before = {"floor": 0, "head": HEAD, "levels": {}, "next_level": 5, "signaled": []}
+        gh = FakeGitHub(lists={"/issues/9/comments": [state_comment(before)]})
+        self.assertEqual(c.route_pr(gh, pr(), [], "green", set(), {"needs:owner"}, 8, CONFIG), {"needs:owner"})
+        written = [b["body"] for m, p, b in gh.calls if (m, p) == ("PATCH", "/issues/comments/4")]
+        self.assertIsNone(stored(written)["next_level"])
+        update = FakeGitHub(lists={"/issues/9/comments": [state_comment(body=written[0])]})
+        c.route_pr(update, pr(head={"sha": OLD}), [], "red", set(), {"needs:owner"}, 8, CONFIG)
+        after = stored([b["body"] for m, p, b in update.calls if m == "PATCH"])
+        self.assertEqual((after["levels"], after["floor"]), ({}, 0))
 
     def test_a_pr_without_a_ticket_is_judged_too(self):
         calls = self.run_conductor(open_prs=[pr(author="owner", body="Moves the workflows.", labels=[])])

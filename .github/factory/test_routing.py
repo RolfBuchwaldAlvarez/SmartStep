@@ -38,6 +38,14 @@ class Severity(unittest.TestCase):
         self.assertEqual(r.severity_of(["no tag at all"]), "major")
         self.assertEqual(r.severity_of([]), "major")
 
+    def test_each_untagged_finding_counts_as_major_next_to_tagged_ones(self):
+        self.assertEqual(r.severity_of(["[minor] spelling", "Step count is lost on rotation"]), "major")
+
+    def test_an_untagged_body_next_to_inline_comments_is_a_summary(self):
+        self.assertEqual(r.review_findings("Round 1: two findings.", ["[minor] a", "[minor] b"]), ["[minor] a", "[minor] b"])
+        self.assertEqual(r.review_findings("1. [major] x", ["[minor] a"]), ["[minor] a", "1. [major] x"])
+        self.assertEqual(r.review_findings("Rotation loses the count.", []), ["Rotation loses the count."])
+
 
 class Risk(unittest.TestCase):
     def test_risky_paths_and_size(self):
@@ -45,17 +53,34 @@ class Risk(unittest.TestCase):
         for risky in ("app/build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml",
                       "gradle/wrapper/gradle-wrapper.properties",
                       "app/schemas/x/1.json", "app/src/main/AndroidManifest.xml", ".github/workflows/ci.yml",
-                      "app/src/main/java/a/auth/Token.kt"):
+                      "app/src/main/java/a/auth/Token.kt", "app/src/main/java/a/AuthInterceptor.kt",
+                      "app/src/main/java/a/AuthorizationHeader.kt", "app/src/main/java/a/SecurityConfig.kt"):
             self.assertEqual(r.risk_of([risky]), "high", risky)
+        for plain in ("app/src/main/java/com/example/data/AuthorsDao.kt", "app/src/test/java/a/ui/AuthorRowTest.kt"):
+            self.assertEqual(r.risk_of([plain]), "normal", plain)
         self.assertEqual(r.risk_of([f"app/src/F{i}.kt" for i in range(21)]), "high")
+
+
+CONDUCTOR = {"login": "github-actions[bot]"}
 
 
 class State(unittest.TestCase):
     def test_round_trip(self):
         state = {"floor": 8, "head": A, "levels": {A: 5}, "next_level": None, "signaled": [A]}
-        cid, read = r.read_state([{"id": 1, "body": "other"}, {"id": 7, "body": r.render_state(state)}])
+        cid, read = r.read_state([{"id": 1, "body": "other", "user": CONDUCTOR},
+                                  {"id": 7, "body": r.render_state(state), "user": CONDUCTOR}])
         self.assertEqual((cid, read), (7, state))
-        self.assertEqual(r.read_state([{"id": 1, "body": "hi"}]), (None, {}))
+        self.assertEqual(r.read_state([{"id": 1, "body": "hi", "user": CONDUCTOR}]), (None, {}))
+
+    def test_only_a_valid_state_by_the_conductor_counts(self):
+        state = {"floor": 0, "head": A, "levels": {}, "next_level": None, "signaled": []}
+        forged = r.render_state(dict(state, floor=13))
+        self.assertEqual(r.read_state([{"id": 1, "body": forged, "user": {"login": "someone"}},
+                                       {"id": 2, "body": "<!-- factory-state [] -->", "user": CONDUCTOR},
+                                       {"id": 3, "body": r.render_state(dict(state, floor="13")), "user": CONDUCTOR}]),
+                         (None, {}))
+        self.assertEqual(r.read_state([{"id": 2, "body": "<!-- factory-state [] -->", "user": CONDUCTOR},
+                                       {"id": 4, "body": r.render_state(state), "user": CONDUCTOR}]), (4, state))
 
     def test_floor_rises_once_per_head_from_the_level_that_produced_it(self):
         s = r.advance({}, 8, A, False)                       # the implementation, at the ticket's 8
