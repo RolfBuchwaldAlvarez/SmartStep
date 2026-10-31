@@ -4,7 +4,7 @@ This repository is a factory repository (`../factory.yml`, my-ai-second-brain#17
 
 - `conductor.py` reads the state from GitHub and sets labels `next:<task>:<agent>`, `needs:owner` and `step:acceptance`; the agents act only on labels addressed to them. Its docstring lists the rules.
 - `test_conductor.py`: `python3 -m unittest discover -s .github/factory`.
-- The workflows, which only the owner can change: `factory-conductor.yml` runs the conductor on every relevant event and every 15 minutes; `factory-tests.yml` runs the tests on PRs that change the factory files. They were drafted in `workflows/` here; the owner moved them to `.github/workflows/` in #3. `workflows/` holds the next drafts the owner moves or copies over: `android-ci.yml` (build, unit tests, Android Lint, ktlint on every PR and on `main`) and a `factory-conductor.yml` that reacts to finished CI runs (`workflow_run`), because `check_suite` never fires for checks created by GitHub Actions.
+- The workflows in `.github/workflows/`, which only the owner can change: `factory-conductor.yml` runs the conductor on every relevant event, when a CI run finishes (`workflow_run`; `check_suite` never fires for checks created by GitHub Actions) and every 15 minutes; `factory-tests.yml` runs the conductor's tests on PRs that change the factory files; `android-ci.yml` builds the app and runs the unit tests, Android Lint and ktlint on every PR and on `main`. New drafts for the owner go into `workflows/` here.
 
 ## Who implements and who judges
 
@@ -21,7 +21,7 @@ Set in `../factory.yml` (owner decision 2026-10-29):
 
 A PR without a ticket (for example the owner's workflow PRs, or changes to the factory itself) is judged the same way.
 
-**CI for the merge:** `required_checks` in `../factory.yml` names the checks that count; a PR without them stays pending. The conductor's own `conduct` job never counts. Until the Android CI workflow exists (build, unit tests, lint), no ticket gets `factory:ready`.
+**CI for the merge:** `required_checks` in `../factory.yml` names the checks that count; a PR without them stays pending. The conductor's own `conduct` job never counts. It names `android-ci`, so no PR merges without a green Android build.
 
 PRs by the owner get no proofread; updating, fixing and merging them stays with him – the conductor only asks the judges.
 

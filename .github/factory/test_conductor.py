@@ -33,7 +33,7 @@ PROOFREAD = review("codex", body="Proofread: no findings.", commit=OLD)
 class Config(unittest.TestCase):
     def test_factory_yml(self):
         self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
-                                  "judges_per_pr": 2, "max_rounds": 3, "required_checks": []})
+                                  "judges_per_pr": 2, "max_rounds": 3, "required_checks": ["android-ci"]})
 
     def test_former_single_implementer_key(self):
         path = HERE / "_legacy.yml"
