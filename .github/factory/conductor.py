@@ -24,6 +24,13 @@ on the head, checks) and sets or removes labels so that they match:
           or a PR for a ticket without
           factory:ready                  -> none of the conductor's labels
 
+Complexity routing (routing.py, olympus-agents docs/complexity-routing.md):
+a ticket needs points:<n> (else needs:points; 13 or more: needs:split); the
+implement and fix labels come with level:<n> for the run's model and effort;
+judge labels on a risky diff come with risk:high; evidence that a round was too
+weak raises an escalation floor (state comment on the PR); points or a floor
+of 13 or more stop an agent's PR with needs:split, unless needs:owner stands.
+
 The agents' pollers act on the next:* labels addressed to them and decide the
 details (rounds, re-checks, one run at a time). Re-running changes nothing.
 Uses only the workflow's own token: labels and comments, nothing else.
@@ -41,6 +48,9 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import routing  # noqa: E402
+
 API = "https://api.github.com"
 OWNER_LOGIN = "RolfBuchwaldAlvarez"
 AGENT_LOGINS = {"claude-bot-rba[bot]": "claude", "codex-bot-rba[bot]": "codex", "hermes-bot-rba[bot]": "hermes"}
@@ -48,8 +58,16 @@ DECIDING = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
 PROOFREAD = re.compile(r"^[\s*_#>]*Proofread:")
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE)
 PROOFREAD_WAIT = 3600
-MANAGED = ("next:", "needs:owner", "step:acceptance")
-LABEL_COLORS = {"next:": "1d76db", "needs:owner": "d93f0b", "step:acceptance": "0e8a16"}
+MANAGED = ("next:", "needs:owner", "needs:points", "needs:split", "step:acceptance", "level:", "risk:")
+LABEL_COLORS = {"next:": "1d76db", "needs:": "d93f0b", "step:acceptance": "0e8a16", "level:": "c5def5",
+                "risk:": "fbca04"}
+NEEDS_COMMENTS = {
+    "needs:owner": "a judge reached the round limit without approving. The agents pause until you decide.",
+    "needs:points": "this ticket has no valid `points:<n>` label (1, 2, 3, 5, 8, 13 or 21). "
+                    "Nothing is implemented until it has one.",
+    "needs:split": "this is estimated or escalated at 13 points or more: too uncertain for one PR. "
+                   "Please split it into tickets of at most 8 points. The agents pause here.",
+}
 
 
 # ----------------------------------------------------------------- config
@@ -133,7 +151,28 @@ def checks_state(check_runs: list[dict], required: list[str] = ()) -> str:
 
 def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset()) -> set[str]:
     implementer = implementer_for(set(labels), config)
-    return set() if has_pr or implementer == "owner" else {f"next:implement:{implementer}"}
+    if has_pr or implementer == "owner":
+        return set()
+    points = routing.points_of(labels)
+    if points is None:
+        return {"needs:points"}
+    if points >= routing.SPLIT_AT:
+        return {"needs:split"}
+    return {f"next:implement:{implementer}", f"level:{points}"}
+
+
+def routed(labels: set[str], points: int | None, floor: int, severity: str, risk: str) -> set[str]:
+    """Add complexity routing to a PR's labels from pr_labels. Pure."""
+    labels = set(labels)
+    if "needs:owner" in labels:                            # the pipeline's stop comes first
+        return labels
+    if points is not None and (points >= routing.SPLIT_AT or floor >= routing.SPLIT_AT):
+        return {"needs:split"}
+    if points is not None and any(l.startswith("next:fix:") for l in labels):
+        labels.add(f"level:{routing.fix_level(points, severity, floor)}")
+    if risk == "high" and any(l.startswith("next:judge:") for l in labels):
+        labels.add("risk:high")
+    return labels
 
 
 def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: dict) -> set[str]:
@@ -223,15 +262,53 @@ def sync_labels(gh, number: int, current: set[str], desired: set[str], known: se
                     raise
             known.add(name)
         gh.call("POST", f"/issues/{number}/labels", {"labels": [name]})
-        if name == "needs:owner":
+        if name in NEEDS_COMMENTS:
             gh.call("POST", f"/issues/{number}/comments",
-                    {"body": f"@{OWNER_LOGIN} the factory needs you here: a judge reached the round limit "
-                             "without approving. The agents pause until you decide."})
+                    {"body": f"@{OWNER_LOGIN} the factory needs you here: {NEEDS_COMMENTS[name]}"})
         print(f"conductor: #{number} + {name}")
     for name in sorted(current - desired):
         if name.startswith(MANAGED):
             gh.call("DELETE", f"/issues/{number}/labels/{urllib.request.quote(name, safe='')}")
             print(f"conductor: #{number} - {name}")
+
+
+def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], desired: set[str],
+             points: int | None, config: dict) -> set[str]:
+    """Complexity routing for one PR: findings' severity, risk, escalation floor (state comment)."""
+    number, head = pr["number"], pr["head"]["sha"]
+    author = author_of(pr["user"]["login"])
+    if author == "owner":
+        points = None                                      # his PRs: no levels, no split, no state comment
+    real = [r for r in reviews if is_real(r)]
+    by_judge = {j: [r for r in real if agent_of(r["user"]["login"]) == j] for j in judges_for(author, config)}
+    floor, severity = 0, "major"
+    if points is not None:
+        comment_id, before = routing.read_state(gh.all(f"/issues/{number}/comments"))
+        state = routing.advance(before, points, head, False)
+        signal = routing.signal_at(head, checks, by_judge, "complexity:underestimated" in current,
+                                   head in state["levels"])
+        state = routing.advance(state, points, head, signal)
+        floor = state["floor"]
+        open_reviews = [r for rs in by_judge.values() for r in rs[-1:]
+                        if r.get("commit_id") == head and r.get("state") != "APPROVED"]
+        findings = []
+        for r in open_reviews:
+            comments = [c.get("body") for c in gh.all(f"/pulls/{number}/reviews/{r['id']}/comments")]
+            findings += routing.review_findings(r.get("body"), comments)
+        severity = routing.severity_of(findings)
+        labels = routed(desired, points, floor, severity, "normal")
+        fix = next((l for l in labels if l.startswith("level:")), None)
+        state["next_level"] = int(fix.split(":", 1)[1]) if fix else None   # no fix due: no head to expect
+        if state != before or comment_id is None:
+            body = routing.render_state(state)
+            if comment_id is None:
+                gh.call("POST", f"/issues/{number}/comments", {"body": body})
+            else:
+                gh.call("PATCH", f"/issues/comments/{comment_id}", {"body": body})
+    risk = "normal"
+    if any(l.startswith("next:judge:") for l in desired):
+        risk = routing.risk_of(f["filename"] for f in gh.all(f"/pulls/{number}/files"))
+    return routed(desired, points, floor, severity, risk)
 
 
 def reconcile(gh, config: dict, now: float) -> None:
@@ -250,7 +327,9 @@ def reconcile(gh, config: dict, now: float) -> None:
         desired = ticket_labels(issue["number"] in by_ticket, config, frozenset(current))
         sync_labels(gh, issue["number"], current, desired, known)
         handled.add(issue["number"])
-    tickets = {i["number"] for i in gh.all("/issues?state=all&labels=factory:ready") if not i.get("pull_request")}
+    ready = [i for i in gh.all("/issues?state=all&labels=factory:ready") if not i.get("pull_request")]
+    tickets = {i["number"] for i in ready}
+    ticket_points = {i["number"]: routing.points_of({l["name"] for l in i["labels"]}) for i in ready}
     for pr in prs:                                         # every PR by an agent or the owner ...
         if author_of(pr["user"]["login"]) is None:
             continue
@@ -261,7 +340,10 @@ def reconcile(gh, config: dict, now: float) -> None:
         reviews = gh.all(f"/pulls/{pr['number']}/reviews")
         checks = checks_state(gh.all(f"/commits/{pr['head']['sha']}/check-runs"), config["required_checks"])
         current = {l["name"] for l in pr["labels"]}
-        sync_labels(gh, pr["number"], current, pr_labels(full, reviews, checks, now, config), known)
+        desired = pr_labels(full, reviews, checks, now, config)
+        if not full.get("draft"):                          # also with nothing due, to record a fix round's head
+            desired = route_pr(gh, full, reviews, checks, current, desired, ticket_points.get(ticket), config)
+        sync_labels(gh, pr["number"], current, desired, known)
         handled.add(pr["number"])
     for item in gh.all("/issues?state=open"):            # no longer a factory item: clear our labels
         current = {l["name"] for l in item["labels"]}
