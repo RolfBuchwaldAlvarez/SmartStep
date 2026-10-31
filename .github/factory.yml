@@ -12,5 +12,5 @@ judges_per_pr: 2
 max_rounds: 3
 # required_checks: the check names that count as CI for a merge; a PR
 #   without them stays pending. Without the key every check except the
-#   conductor's own counts, and no checks at all count as green – so set it
-#   to the Android CI job names before the first ticket gets factory:ready.
+#   conductor's own counts, and no checks at all count as green.
+required_checks: android-ci
