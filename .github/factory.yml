@@ -14,3 +14,5 @@ max_rounds: 3
 #   without them stays pending. Without the key every check except the
 #   conductor's own counts, and no checks at all count as green.
 required_checks: android-ci
+# estimators: the agents that estimate a factory:estimate ticket independently (planning poker).
+estimators: codex, claude

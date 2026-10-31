@@ -24,6 +24,11 @@ on the head, checks) and sets or removes labels so that they match:
           or a PR for a ticket without
           factory:ready                  -> none of the conductor's labels
 
+Planning poker: a ticket labeled factory:estimate (and no points yet) gets
+next:estimate:<agent> for each of `estimators`; each posts "Estimate: <n> – reason"
+without reading the others'. At most one Fibonacci step apart: the conductor sets
+points:<higher> and asks the owner to approve; further apart: needs:estimate.
+
 Complexity routing (routing.py, olympus-agents docs/complexity-routing.md):
 a ticket needs points:<n> (else needs:points); 13 or 21 points: the implementer
 splits it first (next:split:<agent> with level:<points>; it creates child tickets
@@ -60,13 +65,16 @@ DECIDING = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
 PROOFREAD = re.compile(r"^[\s*_#>]*Proofread:")
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE)
 PROOFREAD_WAIT = 3600
-MANAGED = ("next:", "needs:owner", "needs:points", "needs:split", "step:acceptance", "level:", "risk:")
+MANAGED = ("next:", "needs:owner", "needs:points", "needs:split", "needs:estimate", "step:acceptance", "level:",
+           "risk:")
 LABEL_COLORS = {"next:": "1d76db", "needs:": "d93f0b", "step:acceptance": "0e8a16", "level:": "c5def5",
                 "risk:": "fbca04"}
 NEEDS_COMMENTS = {
     "needs:owner": "a judge reached the round limit without approving. The agents pause until you decide.",
     "needs:points": "this ticket has no valid `points:<n>` label (1, 2, 3, 5, 8, 13 or 21). "
                     "Nothing is implemented until it has one.",
+    "needs:estimate": "the planning-poker estimates differ by more than one Fibonacci step (see the Estimate "
+                      "comments). Please set the points:<n> label yourself.",
     "needs:split": "this is estimated or escalated at 13 points or more: too uncertain for one PR. "
                    "Please split it into tickets of at most 8 points. The agents pause here.",
 }
@@ -77,13 +85,13 @@ NEEDS_COMMENTS = {
 def load_config(path: Path) -> dict:
     """The small `key: value` file .github/factory.yml (lists comma-separated)."""
     config = {"implementers": ["codex"], "judges": ["claude", "hermes"], "judges_per_pr": 2, "max_rounds": 3,
-              "required_checks": []}
+              "required_checks": [], "estimators": ["codex", "claude"]}
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if ":" not in line:
             continue
         key, value = (part.strip() for part in line.split(":", 1))
-        if key in ("judges", "implementers", "implementer", "required_checks"):     # `implementer` is the former single key
+        if key in ("judges", "implementers", "implementer", "required_checks", "estimators"):     # `implementer` is the former single key
             config["implementers" if key == "implementer" else key] = [v.strip() for v in value.split(",") if v.strip()]
         elif key in ("max_rounds", "judges_per_pr"):
             config[key] = int(value)
@@ -162,6 +170,18 @@ def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset()) -
         # Splitting is a task too, at the strength the complexity calls for (owner decision 2026-10-31).
         return set() if "split:done" in labels else {f"next:split:{implementer}", f"level:{points}"}
     return {f"next:implement:{implementer}", f"level:{points}"}
+
+
+def estimate_labels(labels: set[str], estimates: dict) -> tuple[set[str], int | None]:
+    """Planning poker on a `factory:estimate` ticket without points: (labels, points to set or None). Pure."""
+    if routing.points_of(labels) is not None:
+        return set(), None
+    state, points = routing.poker(estimates)
+    if state == "open":
+        return {f"next:estimate:{agent}" for agent, value in estimates.items() if value is None}, None
+    if state == "differ":
+        return {"needs:estimate"}, None
+    return set(), points
 
 
 def routed(labels: set[str], points: int | None, floor: int, severity: str, risk: str) -> set[str]:
@@ -323,6 +343,25 @@ def reconcile(gh, config: dict, now: float) -> None:
         if ticket is not None and author_of(pr["user"]["login"]):
             by_ticket.setdefault(ticket, pr)
     handled = set()
+    for issue in gh.all("/issues?state=open&labels=factory:estimate"):   # planning poker before the points exist
+        if issue.get("pull_request"):
+            continue
+        current = {l["name"] for l in issue["labels"]}
+        estimates = {agent: None for agent in config["estimators"]}
+        for comment in gh.all(f"/issues/{issue['number']}/comments"):
+            agent = agent_of(comment["user"]["login"])
+            if agent in estimates and routing.estimate_of(comment.get("body")) is not None:
+                estimates[agent] = routing.estimate_of(comment["body"])
+        desired, points = estimate_labels(current, estimates)
+        if points is not None:
+            gh.call("POST", f"/issues/{issue['number']}/labels", {"labels": [f"points:{points}"]})
+            gh.call("POST", f"/issues/{issue['number']}/comments",
+                    {"body": f"Planning poker: {', '.join(f'{a} {v}' for a, v in estimates.items())} – "
+                             f"`points:{points}` (the higher value). @{OWNER_LOGIN} approve with `factory:ready`."})
+            print(f"conductor: #{issue['number']} points:{points}")
+        if "factory:ready" not in current:
+            sync_labels(gh, issue["number"], current, desired, known)
+            handled.add(issue["number"])
     for issue in gh.all("/issues?state=open&labels=factory:ready"):
         if issue.get("pull_request"):
             continue

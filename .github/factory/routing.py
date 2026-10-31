@@ -144,3 +144,25 @@ def signal_at(head: str, checks: str, reviews_by_judge: dict, underestimated: bo
     if checks == "red" and fixed_head:
         return True                                            # CI red again after a fix round
     return underestimated and (checks == "red" or rejected_on_head)
+
+
+# ------------------------------------------------------------ planning poker
+
+ESTIMATE = re.compile(r"^[\s*_#>]*Estimate:[\s*_]*(\d+)", re.IGNORECASE)
+
+
+def estimate_of(body: str) -> int | None:
+    """The points of an `Estimate: <n> – reasoning` comment, if n is a Fibonacci value."""
+    match = ESTIMATE.match(body or "")
+    return int(match.group(1)) if match and int(match.group(1)) in FIB else None
+
+
+def poker(estimates: dict) -> tuple[str, int | None]:
+    """Planning poker over the estimators' points: ("agree", the higher value) when they are at most one
+    Fibonacci step apart, ("differ", None) otherwise, ("open", None) while one is missing."""
+    if not estimates or any(v is None for v in estimates.values()):
+        return "open", None
+    steps = [FIB.index(v) for v in estimates.values()]
+    if max(steps) - min(steps) > 1:
+        return "differ", None
+    return "agree", max(estimates.values())

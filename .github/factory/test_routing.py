@@ -101,6 +101,20 @@ class State(unittest.TestCase):
         self.assertNotIn(C, s["levels"])
 
 
+class PlanningPoker(unittest.TestCase):
+    def test_estimate_comments(self):
+        self.assertEqual(r.estimate_of("Estimate: 5 – three layers"), 5)
+        self.assertEqual(r.estimate_of("**Estimate:** 8 – cross-cutting"), 8)   # bold is fine
+        self.assertEqual(r.estimate_of("Estimate: 4"), None)              # not a Fibonacci value
+        self.assertEqual(r.estimate_of("I estimate 5"), None)
+
+    def test_poker(self):
+        self.assertEqual(r.poker({"a": 3, "b": None}), ("open", None))
+        self.assertEqual(r.poker({"a": 3, "b": 5}), ("agree", 5))
+        self.assertEqual(r.poker({"a": 3, "b": 8}), ("differ", None))
+        self.assertEqual(r.poker({"a": 13, "b": 21}), ("agree", 21))
+
+
 class Signals(unittest.TestCase):
     def test_same_judge_rejects_twice(self):
         twice = {"hermes": [rv("COMMENTED", A), rv("COMMENTED", B)]}
