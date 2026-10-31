@@ -8,7 +8,9 @@ on:
     types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft, closed]
   pull_request_review:
     types: [submitted, dismissed]
-  check_suite:
+  # CI results: check_suite never fires for checks created by GitHub Actions.
+  workflow_run:
+    workflows: [android-ci, factory-tests]
     types: [completed]
   schedule:
     - cron: "7,22,37,52 * * * *"      # safety net every 15 minutes

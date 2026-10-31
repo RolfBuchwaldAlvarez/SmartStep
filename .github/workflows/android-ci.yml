@@ -1,4 +1,3 @@
-# Template – the owner moves it to .github/workflows/ (agents may not change workflows).
 # Android CI: build, unit tests, Android Lint and ktlint on every PR and on main.
 # Its job name `android-ci` is the name to set in `required_checks` in .github/factory.yml once it is active.
 name: android-ci
