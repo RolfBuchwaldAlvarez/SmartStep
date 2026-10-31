@@ -28,8 +28,8 @@ SEVERITIES = ("minor", "major", "critical")
 TAG = re.compile(r"\[(critical|major|minor|blocking|non-blocking|p[0-3])\]", re.IGNORECASE)
 TAG_SEVERITY = {"critical": "critical", "p0": "critical", "major": "major", "blocking": "major", "p1": "major",
                 "p2": "major", "minor": "minor", "non-blocking": "minor", "p3": "minor"}
-RISKY = re.compile(r"(\.gradle(\.kts)?$|(^|/)gradle/|libs\.versions\.toml$|AndroidManifest\.xml$|(^|/)schemas/|"
-                   r"migration|\.sql$|(^|/)\.github/|security|crypto|auth)", re.IGNORECASE)
+RISKY = re.compile(r"(\.gradle(\.kts)?$|gradle\.properties$|(^|/)gradle/|libs\.versions\.toml$|AndroidManifest\.xml$|"
+                   r"(^|/)schemas/|migration|\.sql$|(^|/)\.github/|security|crypto|auth)", re.IGNORECASE)
 RISKY_FILE_COUNT = 20
 
 

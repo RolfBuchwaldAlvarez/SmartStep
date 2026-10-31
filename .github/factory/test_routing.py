@@ -42,7 +42,8 @@ class Severity(unittest.TestCase):
 class Risk(unittest.TestCase):
     def test_risky_paths_and_size(self):
         self.assertEqual(r.risk_of(["app/src/main/java/a/Home.kt"]), "normal")
-        for risky in ("app/build.gradle.kts", "gradle/libs.versions.toml", "gradle/wrapper/gradle-wrapper.properties",
+        for risky in ("app/build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml",
+                      "gradle/wrapper/gradle-wrapper.properties",
                       "app/schemas/x/1.json", "app/src/main/AndroidManifest.xml", ".github/workflows/ci.yml",
                       "app/src/main/java/a/auth/Token.kt"):
             self.assertEqual(r.risk_of([risky]), "high", risky)
