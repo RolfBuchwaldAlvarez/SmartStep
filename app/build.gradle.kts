@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ktlint)
+    alias(libs.plugins.detekt)
     alias(libs.plugins.koin.compiler)
     alias(libs.plugins.ksp)
     alias(libs.plugins.room3)
@@ -84,6 +85,14 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+}
+
+// Static analysis (Second Brain, 50-domains/android/build-and-tooling.md). `./gradlew detekt` runs the light
+// mode (no type resolution) that android-ci uses; findings fail the build.
+detekt {
+    buildUponDefaultConfig = true
+    parallel = true
+    config.setFrom(rootProject.file("config/detekt/detekt.yml"))
 }
 
 ktlint {

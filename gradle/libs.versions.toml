@@ -13,6 +13,9 @@ runtime = "1.12.1"
 core-splashscreen = "1.2.0"
 foundation = "1.12.1"
 ktlint = "14.2.0"
+# Alpha on purpose: the only stable detekt (1.23.8) is built for Kotlin 2.0 and does not run with
+# Kotlin 2.4 / AGP 9. Owner decision 2026-10-31 (SmartStep#8); move to 2.0.0 stable when it is released.
+detekt = "2.0.0-alpha.6"
 ktlintComposeRules = "0.6.8"
 koin = "4.2.2"
 koin-plugin = "1.2.1"
@@ -69,6 +72,7 @@ kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }
 koin-compiler = { id = "io.insert-koin.compiler.plugin", version.ref = "koin-plugin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 room3 = { id = "androidx.room3", version.ref = "room3" }
