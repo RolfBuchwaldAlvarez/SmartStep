@@ -36,6 +36,28 @@ PRs by the owner get no proofread; updating, fixing and merging them stays with 
 - **Escalation:** CI red again after a fix round, the same judge rejecting two rounds in a row, or `complexity:underestimated` (set by the implementer) followed by a red CI or a rejection raise a floor to one Fibonacci step above the level of the round that produced the head. Fix rounds never run below the floor; at 13 the PR stops with `needs:split`. The floor and each round's level are kept in a state comment on the PR (`<!-- factory-state … -->`), so re-running never raises it twice. Only a state comment by the conductor's own identity (`github-actions[bot]`) with a valid state counts; any other is ignored.
 - **Risk:** judge labels on a diff that touches build files, the Gradle wrapper or version catalog, database schemas or migrations, the manifest, `.github/`, security code (a path containing `security`, `crypto` or `auth`, but not `author`), or more than 20 files come with `risk:high`: the judges run at high effort.
 - The pipeline's round limits and `needs:owner` come first; escalation only sets the level of a round they still allow, and `needs:split` never replaces `needs:owner`.
+
+### Timeout evidence
+
+`timeout_signals: true` advertises support for the poller's version-1 timeout
+bridge (`olympus-agents/docs/factory-timeouts.md`, issue olympus-agents#33).
+The poller posts a structured comment under its own identity before adding
+`complexity:timeout`; the existing issue-label event wakes this conductor.
+The conductor removes that wakeup label only after routing/state writes.
+
+For PRs with valid factory-ticket points, current-head reports from the PR author (proofread/fix/update) or its eligible
+judges (review) raise the floor from the actual run level. Review tasks without
+a level use the level that produced the head. Before a PR exists, a ticket
+implementation timeout from its assigned implementer can raise its next level;
+that floor follows the same implementer's linked PR. Repeated reports at one
+level cannot step the floor repeatedly; a new attempt at a higher level can.
+Wrong roles, stale heads, malformed comments and the wakeup label alone do not
+escalate. Points, retry budgets and review/owner prerequisites remain intact;
+floor 13 stops with `needs:split`, while `needs:owner` takes precedence.
+
+Install this receiver before opting in. Older pollers ignore the new key, and
+updated pollers keep their old behavior in repositories without the opt-in.
+No workflow or Android application change is part of this timeout bridge.
 - The owner's PRs get no level, no `needs:split` and no state comment: a ticket he implements himself needs no points.
 
 ## Flow

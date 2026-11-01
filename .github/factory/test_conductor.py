@@ -1,6 +1,7 @@
 """Tests for conductor.py. Run: python3 -m unittest discover -s .github/factory"""
 
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 
@@ -35,7 +36,7 @@ class Config(unittest.TestCase):
     def test_factory_yml(self):
         self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
                                   "judges_per_pr": 2, "max_rounds": 3, "required_checks": ["android-ci"],
-                                  "estimators": ["codex", "claude"]})
+                                  "estimators": ["codex", "claude"], "timeout_signals": True})
 
     def test_former_single_implementer_key(self):
         path = HERE / "_legacy.yml"
@@ -132,6 +133,72 @@ class Poker(unittest.TestCase):
 
 
 class Routed(unittest.TestCase):
+    def test_timeout_on_current_head_raises_floor_without_ci_or_review_failure(self):
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": '<!-- factory-timeout ' + json.dumps({"version": 1, "kind": "fix", "head": HEAD,
+                         "level": 3, "run_id": "a" * 32}) + ' -->\nRun timed out.'}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        labels = c.route_pr(gh, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:5", labels)                  # a timeout at 3 raises the floor to 5
+
+    def test_implementation_timeout_raises_next_ticket_level(self):
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": '<!-- factory-timeout ' + json.dumps({"version": 1, "kind": "implement", "head": "ticket",
+                         "level": 5, "run_id": "a" * 32}) + ' -->\nRun timed out.'}
+        ticket = item(5, "factory:ready", "points:5", "complexity:timeout")
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_all=[ticket]), **{"/issues/5/comments": [note]}))
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertIn(("POST", "/issues/5/labels", {"labels": ["level:8"]}), gh.calls)
+        self.assertIn(("DELETE", "/issues/5/labels/complexity%3Atimeout", None), gh.calls)
+
+    def test_timeout_replay_does_not_raise_again_and_old_heads_are_ignored(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 3, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        first = c.route_pr(gh, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        state_note = {"id": 99, "user": {"login": c.routing.STATE_WRITER}, "body": gh.calls[-1][2]["body"]}
+        repeat = FakeGitHub(lists={"/issues/9/comments": [note, state_note, note]})
+        self.assertEqual(c.route_pr(repeat, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG), first)
+        self.assertFalse(repeat.calls)                    # no state rewrite or escalation on duplicate evidence
+        stale = FakeGitHub(lists={"/issues/9/comments": [note]})
+        labels = c.route_pr(stale, pr(head={"sha": OLD}), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:3", labels)
+
+    def test_timeout_floor_preserves_owner_stop_and_split_limit(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 8, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        for desired, expected in [({"needs:owner"}, {"needs:owner"}), ({"next:fix:codex"}, {"needs:split"})]:
+            gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+            self.assertEqual(c.route_pr(gh, pr(), [], "pending", set(), desired, 8, CONFIG), expected)
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:8"}), 13), {"needs:split"})
+
+    def test_disabled_protocol_and_label_without_evidence_do_not_escalate(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 8, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout"}, {"next:fix:codex"},
+                         5, dict(CONFIG, timeout_signals=False))
+        self.assertIn("level:3", got)
+        gh = FakeGitHub()
+        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout"}, {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:3", got)
+
+    def test_initial_implementation_floor_carries_into_its_pr(self):
+        event = {"version": 1, "kind": "implement", "head": "ticket", "level": 5, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        ticket = item(5, "factory:ready", "points:5")
+        pull = pr(labels=[])
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_all=[ticket, pull], open_prs=[pull]),
+                                  **{"/issues/5/comments": [note]}), prs={9: pull})
+        c.reconcile(gh, CONFIG, NOW)
+        states = [body["body"] for method, path, body in gh.calls if path == "/issues/9/comments"]
+        self.assertEqual(c.routing.read_state([{"id": 99, "user": {"login": c.routing.STATE_WRITER},
+                                               "body": states[0]}])[1]["floor"], 8)
+
     def test_fix_level_follows_severity_and_floor(self):
         fix = {"next:fix:codex", "next:judge:hermes"}
         self.assertIn("level:2", c.routed(fix, 8, 0, "minor", "normal"))
@@ -288,6 +355,12 @@ def lists(open_ready=(), open_all=(), closed_ready=(), open_prs=(), closed_prs=(
 
 
 class Sync(unittest.TestCase):
+    def test_timeout_ack_is_removed_after_obsolete_task_labels(self):
+        gh = FakeGitHub()
+        c.sync_labels(gh, 9, {"complexity:timeout", "level:8", "next:fix:codex"}, {"needs:split"}, set())
+        self.assertEqual(gh.calls[-1], ("DELETE", "/issues/9/labels/complexity%3Atimeout", None))
+        self.assertIn(("DELETE", "/issues/9/labels/next%3Afix%3Acodex", None), gh.calls[:-1])
+
     def test_adds_missing_removes_stale_keeps_others(self):
         gh = FakeGitHub()
         c.sync_labels(gh, 9, {"next:judge:claude", "factory:ready", "bug"}, {"next:judge:hermes"}, {"next:judge:hermes"})

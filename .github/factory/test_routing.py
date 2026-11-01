@@ -1,6 +1,7 @@
 """Tests for routing.py. Run: python3 -m unittest discover -s .github/factory"""
 
 import importlib.util
+import json
 import unittest
 from pathlib import Path
 
@@ -119,6 +120,42 @@ class PlanningPoker(unittest.TestCase):
 
 
 class Signals(unittest.TestCase):
+    def timeout(self, **changes):
+        event = {"version": 1, "kind": "fix", "head": A, "level": 3, "run_id": "a" * 32}
+        actor = changes.pop("actor", "codex-bot-rba[bot]")
+        event.update(changes)
+        return {"user": {"login": actor}, "body": r.TIMEOUT_MARK + json.dumps(event) + " -->\nTimed out."}
+
+    def test_timeout_is_idempotent_and_uses_the_failed_run_level(self):
+        note = self.timeout()
+        self.assertEqual(r.timeout_floor([note, note], A, "codex-bot-rba[bot]"), 5)
+        # Another attempt on the unchanged head at its raised level can raise again.
+        self.assertEqual(r.timeout_floor([note, self.timeout(level=5)], A, "codex-bot-rba[bot]"), 8)
+
+    def test_wrong_heads_roles_actors_and_malformed_evidence_are_ignored(self):
+        for changes in ({"head": B}, {"actor": "someone"}, {"actor": "hermes-bot-rba[bot]"},
+                        {"kind": "estimate"}, {"kind": "implement"}, {"run_id": "bad"},
+                        {"version": True}, {"version": 2}, {"level": True}, {"level": 4},
+                        {"level": [5]}, {"level": "5"}):
+            with self.subTest(changes=changes):
+                self.assertEqual(r.timeout_floor([self.timeout(**changes)], A, "codex-bot-rba[bot]"), 0)
+        for body in (r.TIMEOUT_MARK + "not-json -->", r.TIMEOUT_MARK + "[] -->", "x" * 5000,
+                     r.TIMEOUT_MARK + "[" * 1100 + " -->"):
+            note = {"user": {"login": "codex-bot-rba[bot]"}, "body": body}
+            self.assertEqual(r.timeout_floor([note], A, "codex-bot-rba[bot]"), 0)
+
+    def test_reviewer_timeout_uses_producing_level_and_only_eligible_judges(self):
+        note = self.timeout(kind="review", actor="hermes-bot-rba[bot]", level=None)
+        self.assertEqual(r.timeout_floor([note], A, "codex-bot-rba[bot]", ["hermes-bot-rba[bot]"], 5), 8)
+        self.assertEqual(r.timeout_floor([note], A, "codex-bot-rba[bot]", [], 5), 0)
+
+    def test_ticket_timeout_requires_assigned_implementer_and_run_level(self):
+        note = self.timeout(kind="implement", head="ticket", level=8)
+        self.assertEqual(r.timeout_floor([note], "ticket", "codex-bot-rba[bot]"), 13)
+        self.assertEqual(r.timeout_floor([note], "ticket", "claude-bot-rba[bot]"), 0)
+        self.assertEqual(r.timeout_floor([self.timeout(kind="implement", head="ticket", level=None)],
+                                        "ticket", "codex-bot-rba[bot]", produced_level=8), 0)
+
     def test_same_judge_rejects_twice(self):
         twice = {"hermes": [rv("COMMENTED", A), rv("COMMENTED", B)]}
         self.assertTrue(r.signal_at(B, "green", twice, False, True))
