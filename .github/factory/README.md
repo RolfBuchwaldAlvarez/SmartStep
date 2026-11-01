@@ -42,12 +42,16 @@ PRs by the owner get no proofread; updating, fixing and merging them stays with 
 `timeout_signals: true` advertises support for the poller's version-1 timeout
 bridge (`olympus-agents/docs/factory-timeouts.md`, issue olympus-agents#33).
 The poller posts a structured comment under its own identity before adding
-`complexity:timeout`; the existing issue-label event wakes this conductor.
-The conductor removes that wakeup label only after routing/state writes.
+`complexity:timeout:<agent>`; the existing issue-label event wakes this conductor.
+Every poller waits while any reporter marker remains. The conductor removes
+only markers in its captured label snapshot, after routing/state writes and
+obsolete task-label removal. A concurrent new reporter's marker survives that
+acknowledgment; one poller/run per agent prevents same-agent overlap.
 
 For PRs with valid factory-ticket points, current-head reports from the PR author (proofread/fix/update) or its eligible
-judges (review) raise the floor from the actual run level. Review tasks without
-a level use the level that produced the head. Before a PR exists, a ticket
+judges (review) raise the floor from the actual run level. Review/proofread/update
+records must carry null, and use the level that produced the head; fix records
+must carry a numeric run level. Before a PR exists, a ticket
 implementation timeout from its assigned implementer can raise its next level;
 that floor follows the same implementer's linked PR. Repeated reports at one
 level cannot step the floor repeatedly; a new attempt at a higher level can.

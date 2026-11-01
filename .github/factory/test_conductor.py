@@ -4,6 +4,7 @@ import importlib.util
 import json
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("conductor", HERE / "conductor.py")
@@ -145,11 +146,11 @@ class Routed(unittest.TestCase):
         note = {"user": {"login": "codex-bot-rba[bot]"},
                 "body": '<!-- factory-timeout ' + json.dumps({"version": 1, "kind": "implement", "head": "ticket",
                          "level": 5, "run_id": "a" * 32}) + ' -->\nRun timed out.'}
-        ticket = item(5, "factory:ready", "points:5", "complexity:timeout")
+        ticket = item(5, "factory:ready", "points:5", "complexity:timeout:codex")
         gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_all=[ticket]), **{"/issues/5/comments": [note]}))
         c.reconcile(gh, CONFIG, NOW)
         self.assertIn(("POST", "/issues/5/labels", {"labels": ["level:8"]}), gh.calls)
-        self.assertIn(("DELETE", "/issues/5/labels/complexity%3Atimeout", None), gh.calls)
+        self.assertIn(("DELETE", "/issues/5/labels/complexity%3Atimeout%3Acodex", None), gh.calls)
 
     def test_timeout_replay_does_not_raise_again_and_old_heads_are_ignored(self):
         event = {"version": 1, "kind": "fix", "head": HEAD, "level": 3, "run_id": "a" * 32}
@@ -179,11 +180,11 @@ class Routed(unittest.TestCase):
         note = {"user": {"login": "codex-bot-rba[bot]"},
                 "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
         gh = FakeGitHub(lists={"/issues/9/comments": [note]})
-        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout"}, {"next:fix:codex"},
+        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout:codex"}, {"next:fix:codex"},
                          5, dict(CONFIG, timeout_signals=False))
         self.assertIn("level:3", got)
         gh = FakeGitHub()
-        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout"}, {"next:fix:codex"}, 5, CONFIG)
+        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout:codex"}, {"next:fix:codex"}, 5, CONFIG)
         self.assertIn("level:3", got)
 
     def test_initial_implementation_floor_carries_into_its_pr(self):
@@ -355,10 +356,28 @@ def lists(open_ready=(), open_all=(), closed_ready=(), open_prs=(), closed_prs=(
 
 
 class Sync(unittest.TestCase):
+    def test_new_reporter_marker_survives_an_older_conductor_snapshot(self):
+        captured = {"complexity:timeout:codex", "level:3", "next:fix:codex"}
+        actual = set(captured)
+        class Concurrent(FakeGitHub):
+            def call(self, method, path, body=None):
+                # Another agent reports after our snapshot, before acknowledgment.
+                if method == "POST" and path == "/issues/9/labels":
+                    actual.add("complexity:timeout:hermes")
+                    actual.update(body["labels"])
+                if method == "DELETE":
+                    actual.discard(unquote(path.rsplit("/", 1)[1]))
+                return super().call(method, path, body)
+        gh = Concurrent()
+        c.sync_labels(gh, 9, captured, {"needs:owner"}, set())
+        self.assertIn("complexity:timeout:hermes", actual)
+        self.assertNotIn("complexity:timeout:codex", actual)
+        self.assertEqual(gh.calls[-1], ("DELETE", "/issues/9/labels/complexity%3Atimeout%3Acodex", None))
+
     def test_timeout_ack_is_removed_after_obsolete_task_labels(self):
         gh = FakeGitHub()
-        c.sync_labels(gh, 9, {"complexity:timeout", "level:8", "next:fix:codex"}, {"needs:split"}, set())
-        self.assertEqual(gh.calls[-1], ("DELETE", "/issues/9/labels/complexity%3Atimeout", None))
+        c.sync_labels(gh, 9, {"complexity:timeout:codex", "level:8", "next:fix:codex"}, {"needs:split"}, set())
+        self.assertEqual(gh.calls[-1], ("DELETE", "/issues/9/labels/complexity%3Atimeout%3Acodex", None))
         self.assertIn(("DELETE", "/issues/9/labels/next%3Afix%3Acodex", None), gh.calls[:-1])
 
     def test_adds_missing_removes_stale_keeps_others(self):
@@ -388,6 +407,17 @@ class Sync(unittest.TestCase):
 
 
 class Reconcile(unittest.TestCase):
+    def test_closed_history_without_an_active_pr_needs_no_timeout_fetch(self):
+        calls = []
+        class Traced(FakeGitHub):
+            def all(self, path):
+                calls.append(path)
+                return super().all(path)
+        closed = item(5, "factory:ready", "points:5")
+        gh = Traced(lists=lists(closed_ready=[closed]))
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertNotIn("/issues/5/comments", calls)
+
     def run_conductor(self, **kw):
         gh = FakeGitHub(lists=lists(**kw), prs={p["number"]: p for p in kw.get("open_prs", ())})
         c.reconcile(gh, CONFIG, NOW)

@@ -148,6 +148,13 @@ class Signals(unittest.TestCase):
         note = self.timeout(kind="review", actor="hermes-bot-rba[bot]", level=None)
         self.assertEqual(r.timeout_floor([note], A, "codex-bot-rba[bot]", ["hermes-bot-rba[bot]"], 5), 8)
         self.assertEqual(r.timeout_floor([note], A, "codex-bot-rba[bot]", [], 5), 0)
+        self.assertEqual(r.timeout_floor([self.timeout(kind="review", actor="hermes-bot-rba[bot]", level=3)],
+                                        A, "codex-bot-rba[bot]", ["hermes-bot-rba[bot]"], 5), 0)
+        for kind in ("proofread", "update"):
+            self.assertEqual(r.timeout_floor([self.timeout(kind=kind, level=3)], A, "codex-bot-rba[bot]",
+                                            produced_level=5), 0)
+        self.assertEqual(r.timeout_floor([self.timeout(level=None)], A, "codex-bot-rba[bot]",
+                                        produced_level=5), 0)
 
     def test_ticket_timeout_requires_assigned_implementer_and_run_level(self):
         note = self.timeout(kind="implement", head="ticket", level=8)

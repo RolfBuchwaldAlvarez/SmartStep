@@ -66,7 +66,7 @@ PROOFREAD = re.compile(r"^[\s*_#>]*Proofread:")
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE)
 PROOFREAD_WAIT = 3600
 MANAGED = ("next:", "needs:owner", "needs:points", "needs:split", "needs:estimate", "step:acceptance", "level:",
-           "risk:", "complexity:timeout")
+           "risk:", "complexity:timeout:")
 LABEL_COLORS = {"next:": "1d76db", "needs:": "d93f0b", "step:acceptance": "0e8a16", "level:": "c5def5",
                 "risk:": "fbca04"}
 NEEDS_COMMENTS = {
@@ -301,7 +301,7 @@ def sync_labels(gh, number: int, current: set[str], desired: set[str], known: se
         print(f"conductor: #{number} + {name}")
     # Releasing a timeout wakeup is the acknowledgment: obsolete task/level
     # labels must already be gone before a poller can run again.
-    for name in sorted(current - desired, key=lambda name: (name == "complexity:timeout", name)):
+    for name in sorted(current - desired, key=lambda name: (name.startswith("complexity:timeout:"), name)):
         if name.startswith(MANAGED):
             gh.call("DELETE", f"/issues/{number}/labels/{urllib.request.quote(name, safe='')}")
             print(f"conductor: #{number} - {name}")
@@ -403,7 +403,8 @@ def reconcile(gh, config: dict, now: float) -> None:
     ticket_points = {i["number"]: routing.points_of({l["name"] for l in i["labels"]}) for i in ready}
     ticket_implementers = {i["number"]: implementer_for({l["name"] for l in i["labels"]}, config) for i in ready}
     for issue in ready:
-        floor_for(issue)
+        if issue["number"] in by_ticket:
+            floor_for(issue)                              # closed history without an active PR needs no fetch
     for pr in prs:                                         # every PR by an agent or the owner ...
         if author_of(pr["user"]["login"]) is None:
             continue

@@ -83,7 +83,9 @@ def timeout_floor(comments, head: str, author: str, judges=(), produced_level: i
         elif kind not in ("proofread", "fix", "update") or actor != author:
             continue
         level = event["level"]
-        if level is None and head != "ticket":
+        if kind in ("review", "proofread", "update"):
+            if level is not None:
+                continue                                # these commands never run at a fix label's level
             level = produced_level
         if type(level) is int and level in FIB:
             floor = max(floor, next_step(level))
