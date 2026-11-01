@@ -54,8 +54,8 @@ def timeout_floor(comments, head: str, author: str, judges=(), produced_level: i
     """Trusted timeout evidence, scoped to this head/role; repeated evidence is idempotent.
 
     author/judges are exact GitHub logins supplied by the conductor, not by the
-    comment. A missing level on PR review/proofread/update uses the level that
-    produced the head; ticket implementation records always need their run level.
+    comment. A null level on PR review/proofread/update uses the level that
+    produced the head; fix and ticket implementation records need their run level.
     """
     floor = 0
     for comment in comments:
