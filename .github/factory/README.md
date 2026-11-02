@@ -11,13 +11,15 @@ This repository is a factory repository (`../factory.yml`, my-ai-second-brain#17
 Set in `../factory.yml` (owner decision 2026-10-29):
 
 - `implementers: codex, claude` – Codex by default; a ticket label `implementer:claude` lets Claude implement it, `implementer:owner` means the owner implements it himself.
-- `judges: claude, hermes, codex` with `judges_per_pr: 2` – a PR's judges are the first two of that list other than its author, so nobody judges their own PR and there are always two judges from other model families:
+- `judges: claude, hermes, codex` with `judges_per_pr: 2` – a PR's judges are the first two distinct names from that list other than its author and everyone who authored any PR for its linked ticket (including closed or draft attempts). With no earlier implementation by another agent, the usual pairs are:
 
 | Author | Judges |
 |---|---|
 | Codex | Claude, Hermes |
 | Claude | Hermes, Codex |
 | the owner | Claude, Hermes |
+
+If ticket history leaves fewer than two eligible judges, the conductor sets `needs:owner` and never schedules an automatic fix or merge based on a reduced quorum. The owner supplies the missing approval and completes the paused PR manually. Excluded agents' reviews do not count toward routing or escalation. Ticket history is read from all PRs before label writes; an API failure stops that cycle rather than assuming an empty history.
 
 A PR without a ticket (for example the owner's workflow PRs, or changes to the factory itself) is judged the same way.
 

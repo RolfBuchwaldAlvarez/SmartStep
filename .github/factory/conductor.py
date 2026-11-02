@@ -9,7 +9,7 @@ on the head, checks) and sets or removes labels so that they match:
           (implementer:<name> picks one of `implementers`, default the first;
           implementer:owner means the owner implements: no label)
   PR      by an agent or the owner; its judges are the first `judges_per_pr`
-          of `judges` other than its author (the owner's PRs get no proofread;
+          of `judges` other than its author or any implementer of the ticket (the owner's PRs get no proofread;
           update, fix and merge are his, the conductor only asks the judges)
           conflicts with its base        -> next:update:<author>
           no proofread yet (first hour)  -> next:proofread:<author>
@@ -70,7 +70,9 @@ MANAGED = ("next:", "needs:owner", "needs:points", "needs:split", "needs:estimat
 LABEL_COLORS = {"next:": "1d76db", "needs:": "d93f0b", "step:acceptance": "0e8a16", "level:": "c5def5",
                 "risk:": "fbca04"}
 NEEDS_COMMENTS = {
-    "needs:owner": "a judge reached the round limit without approving. The agents pause until you decide.",
+    "needs:owner": "a judge reached the round limit without approving, or fewer than the required number of "
+                   "eligible judges remain after excluding everyone who implemented this ticket. "
+                   "The agents pause until you decide; with too few judges, give the missing approval yourself.",
     "needs:points": "this ticket has no valid `points:<n>` label (1, 2, 3, 5, 8, 13 or 21). "
                     "Nothing is implemented until it has one.",
     "needs:estimate": "planning poker has no result: the estimates differ by more than one Fibonacci step "
@@ -119,9 +121,20 @@ def implementer_for(labels: set[str], config: dict) -> str:
     return chosen[0] if len(chosen) == 1 else config["implementers"][0]
 
 
-def judges_for(author: str, config: dict) -> list[str]:
-    """Nobody judges their own PR; the first `judges_per_pr` of the others do."""
-    return [j for j in config["judges"] if j != author][:config["judges_per_pr"]]
+def judges_for(author: str, config: dict, implemented_by=()) -> list[str]:
+    """Distinct configured judges who authored no implementation PR for this ticket."""
+    excluded = set(implemented_by) | {author}
+    return [j for j in dict.fromkeys(config["judges"]) if j not in excluded][:config["judges_per_pr"]]
+
+
+def ticket_implementers(prs: list[dict]) -> dict[int, set[str]]:
+    """All recognized authors of ticket-linked PRs, including closed and draft attempts."""
+    result = {}
+    for pr in prs:
+        ticket, author = linked_ticket(pr), author_of(pr["user"]["login"])
+        if ticket is not None and author is not None:
+            result.setdefault(ticket, set()).add(author)
+    return result
 
 
 def is_real(review: dict) -> bool:
@@ -203,7 +216,7 @@ def routed(labels: set[str], points: int | None, floor: int, severity: str, risk
     return labels
 
 
-def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: dict) -> set[str]:
+def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: dict, implemented_by=()) -> set[str]:
     """The labels a factory PR should carry right now. Pure."""
     author = author_of(pr["user"]["login"])
     if author is None or pr.get("draft"):
@@ -217,7 +230,9 @@ def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: di
     opened = datetime.strptime(pr["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
     if not by_owner and not proofread and now - opened <= PROOFREAD_WAIT:
         return {f"next:proofread:{author}"}
-    judges = judges_for(author, config)
+    judges = judges_for(author, config, implemented_by)
+    if len(judges) < config["judges_per_pr"]:
+        return {"needs:owner"}                            # never silently reduce the review gate
     open_judges, present = [], []
     for judge in judges:
         theirs = [r for r in reviews if agent_of(r["user"]["login"]) == judge]
@@ -301,14 +316,14 @@ def sync_labels(gh, number: int, current: set[str], desired: set[str], known: se
 
 
 def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], desired: set[str],
-             points: int | None, config: dict) -> set[str]:
+             points: int | None, config: dict, implemented_by=()) -> set[str]:
     """Complexity routing for one PR: findings' severity, risk, escalation floor (state comment)."""
     number, head = pr["number"], pr["head"]["sha"]
     author = author_of(pr["user"]["login"])
     if author == "owner":
         points = None                                      # his PRs: no levels, no split, no state comment
     real = [r for r in reviews if is_real(r)]
-    by_judge = {j: [r for r in real if agent_of(r["user"]["login"]) == j] for j in judges_for(author, config)}
+    by_judge = {j: [r for r in real if agent_of(r["user"]["login"]) == j] for j in judges_for(author, config, implemented_by)}
     floor, severity = 0, "major"
     if points is not None:
         comment_id, before = routing.read_state(gh.all(f"/issues/{number}/comments"))
@@ -342,6 +357,8 @@ def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], 
 def reconcile(gh, config: dict, now: float) -> None:
     known = {l["name"] for l in gh.all("/labels")}
     prs = gh.all("/pulls?state=open")
+    # Read the complete history before writing labels: an unavailable history must not grant eligibility.
+    implemented = ticket_implementers(gh.all("/pulls?state=all")) if any(linked_ticket(p) for p in prs) else {}
     by_ticket = {}
     for pr in prs:
         ticket = linked_ticket(pr)
@@ -387,9 +404,10 @@ def reconcile(gh, config: dict, now: float) -> None:
         reviews = gh.all(f"/pulls/{pr['number']}/reviews")
         checks = checks_state(gh.all(f"/commits/{pr['head']['sha']}/check-runs"), config["required_checks"])
         current = {l["name"] for l in pr["labels"]}
-        desired = pr_labels(full, reviews, checks, now, config)
+        excluded = implemented.get(ticket, set())
+        desired = pr_labels(full, reviews, checks, now, config, excluded)
         if not full.get("draft"):                          # also with nothing due, to record a fix round's head
-            desired = route_pr(gh, full, reviews, checks, current, desired, ticket_points.get(ticket), config)
+            desired = route_pr(gh, full, reviews, checks, current, desired, ticket_points.get(ticket), config, excluded)
         sync_labels(gh, pr["number"], current, desired, known)
         handled.add(pr["number"])
     for item in gh.all("/issues?state=open"):            # no longer a factory item: clear our labels

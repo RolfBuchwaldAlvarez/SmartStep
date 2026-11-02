@@ -53,6 +53,64 @@ class Judges(unittest.TestCase):
         self.assertEqual(c.judges_for("owner", CONFIG), ["claude", "hermes"])
         self.assertEqual(c.judges_for("hermes", CONFIG), ["claude", "codex"])
 
+    def test_ticket_implementers_are_ineligible_even_on_other_prs(self):
+        self.assertEqual(c.judges_for("codex", CONFIG, {"claude"}), ["hermes"])
+        # The owner inherits the same ticket history; this is not just author exclusion.
+        self.assertEqual(c.judges_for("owner", CONFIG, {"codex", "claude"}), ["hermes"])
+
+    def test_duplicate_judge_names_do_not_fill_two_seats(self):
+        config = dict(CONFIG, judges=["hermes", "hermes", "claude"])
+        self.assertEqual(c.judges_for("codex", config), ["hermes", "claude"])
+
+    def test_too_few_eligible_judges_never_auto_merge_or_fix(self):
+        for checks in ("green", "red", "pending"):
+            for author in ("codex", "owner"):
+                with self.subTest(checks=checks, author=author):
+                    self.assertEqual(c.pr_labels(pr(author), [PROOFREAD, review("hermes", "APPROVED"),
+                                                              review("claude", "APPROVED")],
+                                                 checks, NOW, CONFIG, {"codex", "claude"}), {"needs:owner"})
+
+    def test_reconcile_includes_closed_and_draft_ticket_implementations(self):
+        ticket = item(5, "factory:ready", "points:3")
+        current = pr(labels=[{"name": "next:merge:codex"}])
+        other = pr("claude", number=10, draft=True, state="closed")
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_prs=[current]), **{
+            "/pulls?state=all": [current, other],
+            "/pulls/9/reviews": [PROOFREAD, review("claude", "APPROVED"), review("hermes", "APPROVED")]}),
+            prs={9: current})
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertIn(("POST", "/issues/9/labels", {"labels": ["needs:owner"]}), gh.calls)
+        self.assertIn(("DELETE", "/issues/9/labels/next%3Amerge%3Acodex", None), gh.calls)
+        owner_comments = [b["body"] for m, path, b in gh.calls if path == "/issues/9/comments" and
+                          "factory needs you" in b["body"]]
+        self.assertTrue(owner_comments and "eligible" in owner_comments[0])
+
+    def test_another_tickets_implementation_does_not_exclude_a_judge(self):
+        history = [pr("claude", body="Closes #6", state="closed")]
+        self.assertEqual(c.ticket_implementers(history), {6: {"claude"}})
+        self.assertEqual(c.ticket_implementers([pr(body="No ticket")]), {})
+
+    def test_unavailable_ticket_history_fails_before_any_writes(self):
+        class Unavailable(FakeGitHub):
+            def all(self, path):
+                if path == "/pulls?state=all":
+                    raise RuntimeError("history unavailable")
+                return super().all(path)
+        gh = Unavailable(lists=lists(open_prs=[pr(labels=[])]))
+        with self.assertRaisesRegex(RuntimeError, "history unavailable"):
+            c.reconcile(gh, CONFIG, NOW)
+        self.assertEqual(gh.calls, [])
+
+    def test_ineligible_review_does_not_raise_the_escalation_floor(self):
+        earlier = review("claude", commit=OLD)
+        current = review("claude", commit=HEAD)
+        gh = FakeGitHub()
+        labels = c.route_pr(gh, pr(), [earlier, current], "green", set(), {"needs:owner"},
+                            3, CONFIG, {"claude"})
+        self.assertEqual(labels, {"needs:owner"})
+        state = stored([b["body"] for m, path, b in gh.calls if path == "/issues/9/comments"])
+        self.assertEqual(state["floor"], 0)
+
 
 class Ticket(unittest.TestCase):
     def test_implement_until_a_pr_exists(self):
