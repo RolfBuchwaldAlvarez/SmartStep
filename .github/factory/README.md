@@ -53,3 +53,24 @@ A judge at the round limit → `needs:owner` and one comment; the agents pause o
 ## Option for later: best of two
 
 Not built (owner decision 2026-10-29). For hard or high-risk tickets, Codex and Claude could implement the same ticket independently; CI and tests run on both PRs, the judges pick the better one, the other PR is closed, and the winner goes through the normal review. Selection instead of letting the two discuss a merged solution: a discussion between two models settles on what sounds convincing, and a merged solution is a third, untested one. It doubles the cost and the runs, and needs a judge who implemented neither – with three agents only Hermes. Also usable in the pilot as a measurement: the same ticket, two implementers, compared directly.
+
+## Ticket metrics
+
+Q8 in issue #9 calls for per-ticket evidence that Codify can read from closed PRs. The conductor recomputes one versioned `<!-- factory-metrics … -->` state comment on **each recognized PR linked to a `factory:ready` ticket**, including closed attempts. Every copy contains the same aggregate across that ticket's recognized PRs. This is a projection of GitHub evidence, not a maintained incrementing counter. The routing `factory-state` comment remains separate and unchanged; metrics never decide labels, eligibility, escalation or merge permission.
+
+| Field | Definition |
+|---|---|
+| `version` | Metric format version, currently 1 |
+| `ticket`, `pull_requests`, `open_pull_requests` | Ticket number and source PR numbers; linkage uses the existing first local closing reference in the PR body |
+| `points` | Ticket's current valid estimate, or null; changing an estimate changes this projection |
+| `levels_recorded` | Distinct levels recorded against produced heads in trusted routing state; these do not include an unobserved initial implementation level or measure actual model execution |
+| `review_rounds` | Distinct real formal review IDs by configured eligible judges, excluding author proofreads and empty thread replies; includes approvals and dismissed reviews |
+| `findings` | Counts by minor/major/critical, following the same `routing.review_findings` and severity-tag conventions used for fix routing; approvals and dismissed reviews add no findings |
+| `ci_failures` | Distinct check-run IDs with failure, timed_out, action_required or startup_failure, excluding the conductor's own `conduct` job; a successful retry does not erase the failed run |
+| `duration_seconds` | Elapsed wall time from the earliest linked PR creation to the latest PR closure, or to the current observation while any attempt is open; null if source timestamps are missing |
+
+Judge eligibility for this projection excludes every recognized author of an attempt for the ticket, then takes the configured number of remaining distinct judges. Review rounds count formal review submissions, not fix rounds, number of commits, or AI calls. A tagged body and its inline findings follow the existing routing convention; this does not establish semantic independence or correctness of reported findings. Duration excludes the time before the first PR and is neither compute time nor billable time. No cost or model-quality ranking is inferred.
+
+All API lists use the existing pagination helper. CI evidence covers retained PR commits, the current head and eligible review heads; checks on force-pushed commits with no remaining reference can be absent. Deleted/edited reviews, changed PR closing references and removed `factory:ready` labels can change or stop the projection. Existing comments remain historical snapshots when the ticket leaves the factory; they are not a permanent ledger. Missing required evidence stops publication for that ticket instead of writing a partial count. Source fetches finish before any of that ticket's metric comments are written; publication itself is not atomic across PRs, and the next reconciliation converges after a write failure.
+
+Only matching comments by `github-actions[bot]` are updated; other users' comments are ignored. Closed tickets continue to be reconciled while they retain `factory:ready`, so the duration freezes after every attempt closes and a subsequent open attempt resumes it. Re-running against unchanged closed evidence makes no metric write. This change adds no workflow and deploys no agent runtime.

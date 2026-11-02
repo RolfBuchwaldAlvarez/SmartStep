@@ -57,6 +57,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import routing  # noqa: E402
+import factory_metrics  # noqa: E402
 
 API = "https://api.github.com"
 OWNER_LOGIN = "RolfBuchwaldAlvarez"
@@ -339,6 +340,52 @@ def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], 
     return routed(desired, points, floor, severity, risk)
 
 
+def sync_ticket_metrics(gh, ready: list[dict], now: float, config: dict) -> None:
+    """Project ticket evidence into a separate trusted state comment on every linked PR.
+
+    Routing state remains independent. Recompute from API source records, never add to an old counter.
+    Gather a ticket completely before publishing any of its snapshots; a failed read propagates.
+    """
+    if not ready:
+        return
+    history = gh.all("/pulls?state=all")
+    for ticket in ready:
+        attempts = [p for p in history if linked_ticket(p) == ticket["number"] and author_of(p["user"]["login"])]
+        if not attempts:
+            continue
+        implemented = {author_of(p["user"]["login"]) for p in attempts}
+        snapshots, comments_by_pr = [], {}
+        for pr in attempts:
+            number = pr["number"]
+            comments = gh.all(f"/issues/{number}/comments")
+            comments_by_pr[number] = comments
+            _, state = routing.read_state(comments)
+            eligible = [j for j in dict.fromkeys(config["judges"]) if j not in implemented][:config["judges_per_pr"]]
+            reviews = [r for r in gh.all(f"/pulls/{number}/reviews")
+                       if is_real(r) and agent_of(r["user"]["login"]) in eligible
+                       and not PROOFREAD.match(r.get("body") or "")]
+            inline = {r["id"]: [c.get("body") for c in gh.all(f"/pulls/{number}/reviews/{r['id']}/comments")]
+                      for r in reviews if r["state"] in ("COMMENTED", "CHANGES_REQUESTED")}
+            # Include retained PR commits and older review heads (including those no longer in the diff).
+            heads = {commit["sha"] for commit in gh.all(f"/pulls/{number}/commits")}
+            heads.add(pr["head"]["sha"])
+            heads.update(r["commit_id"] for r in reviews if r.get("commit_id"))
+            checks = [run for head in sorted(heads) for run in gh.all(f"/commits/{head}/check-runs")]
+            snapshots.append({"pr": pr, "state": state, "reviews": reviews, "inline": inline, "checks": checks})
+        metrics = factory_metrics.summarize(ticket["number"], routing.points_of({l["name"] for l in ticket["labels"]}),
+                                             snapshots, now, routing.severity_of, routing.review_findings)
+        body = (factory_metrics.MARK + json.dumps(metrics, sort_keys=True, separators=(",", ":")) + " -->\n"
+                "Factory ticket metrics (observed GitHub evidence, not agent runtime). "
+                "Definitions and limitations: `.github/factory/README.md`, Ticket metrics.")
+        for number, comments in comments_by_pr.items():
+            existing = next((c for c in comments if c.get("user", {}).get("login") == routing.STATE_WRITER
+                             and (c.get("body") or "").startswith(factory_metrics.MARK)), None)
+            if existing is None:
+                gh.call("POST", f"/issues/{number}/comments", {"body": body})
+            elif existing["body"] != body:
+                gh.call("PATCH", f"/issues/comments/{existing['id']}", {"body": body})
+
+
 def reconcile(gh, config: dict, now: float) -> None:
     known = {l["name"] for l in gh.all("/labels")}
     prs = gh.all("/pulls?state=open")
@@ -402,6 +449,8 @@ def reconcile(gh, config: dict, now: float) -> None:
         current = {l["name"] for l in issue["labels"]}
         delivered = issue.get("state_reason") == "completed" and issue["number"] in merged
         sync_labels(gh, issue["number"], current, acceptance_labels(current) if delivered else set(), known)
+
+    sync_ticket_metrics(gh, ready, now, config)
 
 
 def main() -> int:
