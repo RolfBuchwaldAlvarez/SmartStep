@@ -370,7 +370,7 @@ def sync_ticket_metrics(gh, ready: list[dict], now: float, config: dict) -> None
             heads = {commit["sha"] for commit in gh.all(f"/pulls/{number}/commits")}
             heads.add(pr["head"]["sha"])
             heads.update(r["commit_id"] for r in reviews if r.get("commit_id"))
-            checks = [run for head in sorted(heads) for run in gh.all(f"/commits/{head}/check-runs")]
+            checks = [run for head in sorted(heads) for run in gh.all(f"/commits/{head}/check-runs?filter=all")]
             snapshots.append({"pr": pr, "state": state, "reviews": reviews, "inline": inline, "checks": checks})
         metrics = factory_metrics.summarize(ticket["number"], routing.points_of({l["name"] for l in ticket["labels"]}),
                                              snapshots, now, routing.severity_of, routing.review_findings)

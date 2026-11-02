@@ -80,7 +80,7 @@ class Integration(unittest.TestCase):
         import test_conductor as t
         class MissingChecks(t.FakeGitHub):
             def all(self, path):
-                if path.endswith('/check-runs'):
+                if '/check-runs' in path:
                     raise RuntimeError('checks unavailable')
                 return super().all(path)
         ticket = t.item(5, 'factory:ready', 'points:3')
@@ -104,3 +104,19 @@ class Integration(unittest.TestCase):
         result = json.loads(bodies[0][len(m.MARK):bodies[0].index(' -->')])
         self.assertEqual(result['review_rounds'], 1)
         self.assertEqual(sum(result['findings'].values()), 0)
+
+    def test_successful_retry_does_not_hide_an_earlier_failed_run(self):
+        import json
+        import test_conductor as t
+        class RetriedChecks(t.FakeGitHub):
+            def all(self, path):
+                if '/check-runs' in path:
+                    success = {"id": 12, "name": "android-ci", "conclusion": "success"}
+                    failed = {"id": 11, "name": "android-ci", "conclusion": "failure"}
+                    return [failed, success] if 'filter=all' in path else [success]
+                return super().all(path)
+        gh = RetriedChecks(lists={'/pulls?state=all': [t.pr()]})
+        t.c.sync_ticket_metrics(gh, [t.item(5, 'factory:ready', 'points:3')], t.NOW, t.CONFIG)
+        body = gh.calls[0][2]['body']
+        result = json.loads(body[len(m.MARK):body.index(' -->')])
+        self.assertEqual(result['ci_failures'], 1)
