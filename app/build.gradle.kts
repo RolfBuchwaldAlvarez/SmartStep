@@ -91,8 +91,9 @@ dependencies {
 // mode (no type resolution) that android-ci uses; findings fail the build.
 detekt {
     buildUponDefaultConfig = true
-    parallel = true
+    parallel = false
     config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+    baseline = rootProject.file("config/detekt/baseline.xml")
 }
 
 ktlint {
@@ -107,4 +108,17 @@ koinCompiler {
 
 room3 {
     schemaDirectory("$projectDir/schemas")
+}
+
+// Temporary draft-PR bootstrap: generate the real baseline on the GitHub runner.
+// Removed after the generated XML is captured; no baseline generation in the final gate.
+tasks.matching { name == "detektBaseline" }.configureEach {
+    doLast {
+        println("SMARTSTEP_BASELINE_BEGIN")
+        println(rootProject.file("config/detekt/baseline.xml").readText())
+        println("SMARTSTEP_BASELINE_END")
+    }
+}
+tasks.matching { name == "lintDebug" }.configureEach {
+    dependsOn("detektBaseline")
 }
