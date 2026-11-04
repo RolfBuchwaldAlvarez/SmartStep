@@ -2,6 +2,7 @@
 
 import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from urllib.parse import unquote
@@ -34,6 +35,22 @@ P3 = frozenset({"points:3"})
 
 
 class Config(unittest.TestCase):
+    def test_timeout_opt_in_requires_exactly_one_true(self):
+        cases = [([], False), (["false"], False), (["true"], True),
+                 (["True"], False), (["yes"], False), (["true suffix"], False),
+                 ([""], False), (["true", "true"], False),
+                 (["false", "true"], False), (["true", "false"], False),
+                 (["yes", "true"], False), (["true", "yes"], False)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "factory.yml"
+            for values, expected in cases:
+                with self.subTest(values=values):
+                    path.write_text("implementers: claude\n" + "".join(
+                        f"timeout_signals: {value}\n" for value in values))
+                    config = c.load_config(path)
+                    self.assertIs(config["timeout_signals"], expected)
+                    self.assertEqual(config["implementers"], ["claude"])
+
     def test_factory_yml(self):
         self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
                                   "judges_per_pr": 2, "max_rounds": 3, "required_checks": ["android-ci"],
@@ -134,6 +151,20 @@ class Poker(unittest.TestCase):
 
 
 class Routed(unittest.TestCase):
+    def test_regular_signal_steps_above_initial_implementation_floor(self):
+        for checks, reviews in (("red", []), ("green", [dict(review("claude"), id=42)])):
+            with self.subTest(checks=checks):
+                gh = FakeGitHub()
+                labels = c.route_pr(gh, pr(), reviews, checks, {"complexity:underestimated"},
+                                    {"next:fix:codex"}, 3, CONFIG, initial_floor=5)
+                self.assertIn("level:8", labels)
+                state = stored([gh.calls[-1][2]["body"]])
+                self.assertEqual(state["floor"], 8)
+                replay = FakeGitHub(lists={"/issues/9/comments": [state_comment(state)]})
+                self.assertEqual(c.route_pr(replay, pr(), reviews, checks, {"complexity:underestimated"},
+                                           {"next:fix:codex"}, 3, CONFIG, initial_floor=5), labels)
+                self.assertFalse(replay.calls)
+
     def test_timeout_on_current_head_raises_floor_without_ci_or_review_failure(self):
         note = {"user": {"login": "codex-bot-rba[bot]"},
                 "body": '<!-- factory-timeout ' + json.dumps({"version": 1, "kind": "fix", "head": HEAD,

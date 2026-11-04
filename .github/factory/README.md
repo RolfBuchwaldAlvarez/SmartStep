@@ -42,8 +42,11 @@ PRs by the owner get no proofread; updating, fixing and merging them stays with 
 
 `timeout_signals: true` advertises support for the poller's version-1 timeout
 bridge (`olympus-agents/docs/factory-timeouts.md`, issue olympus-agents#33).
+Only exactly one `timeout_signals: true` entry enables it; missing, false,
+duplicate or malformed values leave it disabled without stopping routing.
 The poller posts a structured comment under its own identity before adding
-`complexity:timeout:<agent>`; the existing issue-label event wakes this conductor.
+`complexity:timeout:<agent>`. For tickets, the existing issue-label event wakes
+this conductor; PR markers are picked up by the 15-minute scheduled reconciliation.
 Every poller waits while any reporter marker remains. The conductor removes
 only markers in its captured label snapshot, after routing/state writes and
 obsolete task-label removal. A concurrent new reporter's marker survives that

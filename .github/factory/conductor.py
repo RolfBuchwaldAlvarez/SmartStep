@@ -77,8 +77,8 @@ NEEDS_COMMENTS = {
                       "(see the Estimate comments), or `estimators` in factory.yml names fewer than two agents. "
                       "Please set the points:<n> label yourself.",
     "needs:split": "this work was escalated to 13 points or more: too uncertain for one PR. The agents pause here. "
-                   "To go on, close any open PR and set the ticket's points to 13 or 21: its implementer then splits it "
-                   "into tickets of at most 8 points for you to approve.",
+                   "To go on, if an open PR exists, close it, and set the ticket's points to 13 or 21: "
+                   "its implementer then splits it into tickets of at most 8 points for you to approve.",
 }
 
 
@@ -88,19 +88,19 @@ def load_config(path: Path) -> dict:
     """The small `key: value` file .github/factory.yml (lists comma-separated)."""
     config = {"implementers": ["codex"], "judges": ["claude", "hermes"], "judges_per_pr": 2, "max_rounds": 3,
               "required_checks": [], "estimators": ["codex", "claude"], "timeout_signals": False}
+    timeout_values = []
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if ":" not in line:
             continue
         key, value = (part.strip() for part in line.split(":", 1))
         if key == "timeout_signals":
-            if value not in ("true", "false"):
-                raise ValueError("timeout_signals must be true or false")
-            config[key] = value == "true"
-        if key in ("judges", "implementers", "implementer", "required_checks", "estimators"):     # `implementer` is the former single key
+            timeout_values.append(value)
+        elif key in ("judges", "implementers", "implementer", "required_checks", "estimators"):     # `implementer` is the former single key
             config["implementers" if key == "implementer" else key] = [v.strip() for v in value.split(",") if v.strip()]
         elif key in ("max_rounds", "judges_per_pr"):
             config[key] = int(value)
+    config["timeout_signals"] = timeout_values == ["true"]
     return config
 
 
@@ -320,16 +320,17 @@ def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], 
     if points is not None:
         comments = gh.all(f"/issues/{number}/comments")
         comment_id, before = routing.read_state(comments)
-        state = routing.advance(before, points, head, False)
+        produced_default = max(points, initial_floor)
+        state = routing.advance(before, produced_default, head, False)
         if config.get("timeout_signals"):
             logins = {v: k for k, v in AGENT_LOGINS.items()}
             timed_out = routing.timeout_floor(comments, head, pr["user"]["login"],
                           [logins[j] for j in by_judge if j in logins],
-                          state["levels"].get(head, max(points, initial_floor)))
+                          state["levels"].get(head, produced_default))
             state["floor"] = max(state["floor"], initial_floor, timed_out)
         signal = routing.signal_at(head, checks, by_judge, "complexity:underestimated" in current,
                                    head in state["levels"])
-        state = routing.advance(state, points, head, signal)
+        state = routing.advance(state, produced_default, head, signal)
         floor = state["floor"]
         open_reviews = [r for rs in by_judge.values() for r in rs[-1:]
                         if r.get("commit_id") == head and r.get("state") != "APPROVED"]
