@@ -1,8 +1,11 @@
 """Tests for conductor.py. Run: python3 -m unittest discover -s .github/factory"""
 
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("conductor", HERE / "conductor.py")
@@ -32,10 +35,26 @@ P3 = frozenset({"points:3"})
 
 
 class Config(unittest.TestCase):
+    def test_timeout_opt_in_requires_exactly_one_true(self):
+        cases = [([], False), (["false"], False), (["true"], True),
+                 (["True"], False), (["yes"], False), (["true suffix"], False),
+                 ([""], False), (["true", "true"], False),
+                 (["false", "true"], False), (["true", "false"], False),
+                 (["yes", "true"], False), (["true", "yes"], False)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "factory.yml"
+            for values, expected in cases:
+                with self.subTest(values=values):
+                    path.write_text("implementers: claude\n" + "".join(
+                        f"timeout_signals: {value}\n" for value in values))
+                    config = c.load_config(path)
+                    self.assertIs(config["timeout_signals"], expected)
+                    self.assertEqual(config["implementers"], ["claude"])
+
     def test_factory_yml(self):
         self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
                                   "judges_per_pr": 2, "max_rounds": 3, "required_checks": ["android-ci"],
-                                  "estimators": ["codex", "claude"]})
+                                  "estimators": ["codex", "claude"], "timeout_signals": True})
 
     def test_former_single_implementer_key(self):
         path = HERE / "_legacy.yml"
@@ -220,6 +239,102 @@ class Poker(unittest.TestCase):
 
 
 class Routed(unittest.TestCase):
+    def test_regular_signal_steps_above_initial_implementation_floor(self):
+        for checks, reviews in (("red", []), ("green", [dict(review("claude"), id=42)])):
+            with self.subTest(checks=checks):
+                gh = FakeGitHub()
+                labels = c.route_pr(gh, pr(), reviews, checks, {"complexity:underestimated"},
+                                    {"next:fix:codex"}, 3, CONFIG, initial_floor=5)
+                self.assertIn("level:8", labels)
+                state = stored([gh.calls[-1][2]["body"]])
+                self.assertEqual(state["floor"], 8)
+                replay = FakeGitHub(lists={"/issues/9/comments": [state_comment(state)]})
+                self.assertEqual(c.route_pr(replay, pr(), reviews, checks, {"complexity:underestimated"},
+                                           {"next:fix:codex"}, 3, CONFIG, initial_floor=5), labels)
+                self.assertFalse(replay.calls)
+
+    def test_timeout_routing_combines_ticket_floor_and_judge_eligibility(self):
+        for reporter, expected_floor in (("claude", 5), ("hermes", 8)):
+            with self.subTest(reporter=reporter):
+                event = {"version": 1, "kind": "review", "head": HEAD,
+                         "level": None, "run_id": "a" * 32}
+                note = {"user": {"login": f"{reporter}-bot-rba[bot]"},
+                        "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+                gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+                labels = c.route_pr(gh, pr(), [], "pending", set(),
+                                    {"needs:owner", "next:judge:hermes"}, 3, CONFIG,
+                                    implemented_by={"codex", "claude"}, initial_floor=5)
+                state = stored([body["body"] for method, path, body in gh.calls
+                                if path == "/issues/9/comments"])
+                self.assertEqual(state["floor"], expected_floor)
+                self.assertEqual(labels, {"needs:owner", "next:judge:hermes"})
+
+    def test_timeout_on_current_head_raises_floor_without_ci_or_review_failure(self):
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": '<!-- factory-timeout ' + json.dumps({"version": 1, "kind": "fix", "head": HEAD,
+                         "level": 3, "run_id": "a" * 32}) + ' -->\nRun timed out.'}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        labels = c.route_pr(gh, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:5", labels)                  # a timeout at 3 raises the floor to 5
+
+    def test_implementation_timeout_raises_next_ticket_level(self):
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": '<!-- factory-timeout ' + json.dumps({"version": 1, "kind": "implement", "head": "ticket",
+                         "level": 5, "run_id": "a" * 32}) + ' -->\nRun timed out.'}
+        ticket = item(5, "factory:ready", "points:5", "complexity:timeout:codex")
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_all=[ticket]), **{"/issues/5/comments": [note]}))
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertIn(("POST", "/issues/5/labels", {"labels": ["level:8"]}), gh.calls)
+        self.assertIn(("DELETE", "/issues/5/labels/complexity%3Atimeout%3Acodex", None), gh.calls)
+
+    def test_timeout_replay_does_not_raise_again_and_old_heads_are_ignored(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 3, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        first = c.route_pr(gh, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        state_note = {"id": 99, "user": {"login": c.routing.STATE_WRITER}, "body": gh.calls[-1][2]["body"]}
+        repeat = FakeGitHub(lists={"/issues/9/comments": [note, state_note, note]})
+        self.assertEqual(c.route_pr(repeat, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG), first)
+        self.assertFalse(repeat.calls)                    # no state rewrite or escalation on duplicate evidence
+        stale = FakeGitHub(lists={"/issues/9/comments": [note]})
+        labels = c.route_pr(stale, pr(head={"sha": OLD}), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:3", labels)
+
+    def test_timeout_floor_preserves_owner_stop_and_split_limit(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 8, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        for desired, expected in [({"needs:owner"}, {"needs:owner"}), ({"next:fix:codex"}, {"needs:split"})]:
+            gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+            self.assertEqual(c.route_pr(gh, pr(), [], "pending", set(), desired, 8, CONFIG), expected)
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:8"}), 13), {"needs:split"})
+
+    def test_disabled_protocol_and_label_without_evidence_do_not_escalate(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 8, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout:codex"}, {"next:fix:codex"},
+                         5, dict(CONFIG, timeout_signals=False))
+        self.assertIn("level:3", got)
+        gh = FakeGitHub()
+        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout:codex"}, {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:3", got)
+
+    def test_initial_implementation_floor_carries_into_its_pr(self):
+        event = {"version": 1, "kind": "implement", "head": "ticket", "level": 5, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        ticket = item(5, "factory:ready", "points:5")
+        pull = pr(labels=[])
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_all=[ticket, pull], open_prs=[pull]),
+                                  **{"/issues/5/comments": [note]}), prs={9: pull})
+        c.reconcile(gh, CONFIG, NOW)
+        states = [body["body"] for method, path, body in gh.calls if path == "/issues/9/comments"]
+        self.assertEqual(c.routing.read_state([{"id": 99, "user": {"login": c.routing.STATE_WRITER},
+                                               "body": states[0]}])[1]["floor"], 8)
+
     def test_fix_level_follows_severity_and_floor(self):
         fix = {"next:fix:codex", "next:judge:hermes"}
         self.assertIn("level:2", c.routed(fix, 8, 0, "minor", "normal"))
@@ -376,6 +491,30 @@ def lists(open_ready=(), open_all=(), closed_ready=(), open_prs=(), closed_prs=(
 
 
 class Sync(unittest.TestCase):
+    def test_new_reporter_marker_survives_an_older_conductor_snapshot(self):
+        captured = {"complexity:timeout:codex", "level:3", "next:fix:codex"}
+        actual = set(captured)
+        class Concurrent(FakeGitHub):
+            def call(self, method, path, body=None):
+                # Another agent reports after our snapshot, before acknowledgment.
+                if method == "POST" and path == "/issues/9/labels":
+                    actual.add("complexity:timeout:hermes")
+                    actual.update(body["labels"])
+                if method == "DELETE":
+                    actual.discard(unquote(path.rsplit("/", 1)[1]))
+                return super().call(method, path, body)
+        gh = Concurrent()
+        c.sync_labels(gh, 9, captured, {"needs:owner"}, set())
+        self.assertIn("complexity:timeout:hermes", actual)
+        self.assertNotIn("complexity:timeout:codex", actual)
+        self.assertEqual(gh.calls[-1], ("DELETE", "/issues/9/labels/complexity%3Atimeout%3Acodex", None))
+
+    def test_timeout_ack_is_removed_after_obsolete_task_labels(self):
+        gh = FakeGitHub()
+        c.sync_labels(gh, 9, {"complexity:timeout:codex", "level:8", "next:fix:codex"}, {"needs:split"}, set())
+        self.assertEqual(gh.calls[-1], ("DELETE", "/issues/9/labels/complexity%3Atimeout%3Acodex", None))
+        self.assertIn(("DELETE", "/issues/9/labels/next%3Afix%3Acodex", None), gh.calls[:-1])
+
     def test_adds_missing_removes_stale_keeps_others(self):
         gh = FakeGitHub()
         c.sync_labels(gh, 9, {"next:judge:claude", "factory:ready", "bug"}, {"next:judge:hermes"}, {"next:judge:hermes"})
@@ -427,6 +566,17 @@ class Sync(unittest.TestCase):
 
 
 class Reconcile(unittest.TestCase):
+    def test_closed_history_without_an_active_pr_needs_no_timeout_fetch(self):
+        calls = []
+        class Traced(FakeGitHub):
+            def all(self, path):
+                calls.append(path)
+                return super().all(path)
+        closed = item(5, "factory:ready", "points:5")
+        gh = Traced(lists=lists(closed_ready=[closed]))
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertNotIn("/issues/5/comments", calls)
+
     def run_conductor(self, **kw):
         gh = FakeGitHub(lists=lists(**kw), prs={p["number"]: p for p in kw.get("open_prs", ())})
         c.reconcile(gh, CONFIG, NOW)

@@ -16,3 +16,6 @@ max_rounds: 3
 required_checks: android-ci
 # estimators: the agents that estimate a factory:estimate ticket independently (planning poker).
 estimators: codex, claude
+# Conductor understands trusted, head/level-scoped factory timeout reports.
+# Older pollers ignore this; updated pollers report timeouts only after this opt-in.
+timeout_signals: true
