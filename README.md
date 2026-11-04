@@ -12,6 +12,8 @@
 
 Expect `TODO()` in the home screen's action handlers: the screen is built, the behavior is next.
 
+The [milestone comparison and ticket drafts](docs/planning/2026-11-01-milestones/README.md) pin the inspected code revision, compare milestone 1 with the owner's specification, and provide reviewable drafts through milestone 4. They include milestone source background and unresolved decisions; they are not implementation approval or a live completion checklist.
+
 ## Architecture
 
 - **Feature packages** (`feature/home`, `feature/myprofile`), each split into `presentation`, `domain` and `data`
