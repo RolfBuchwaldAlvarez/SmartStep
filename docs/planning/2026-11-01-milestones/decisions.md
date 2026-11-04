@@ -10,7 +10,7 @@ These are unresolved specification questions, not newly adopted product decision
 | [D04](tickets/d04.md) | Duration below one minute = zero vs nearest-minute rounding; activity-gap threshold/manual-edit time; metrics frozen during pause vs mandatory edit/reset recalculation. | Duration and metric update policy. |
 | [D05](tickets/d05.md) | Real AI is mandatory but provider/model, credential architecture, HTTP/quota/error policy and external setup are not selected. | Real transport and live acceptance. |
 | [D06](tickets/d06.md) | Numeric example conflicts with no-raw-numbers output rule. Session boundaries, offline starter, quick suggestions offline and concurrent sends are incomplete. | Insight triggers and ephemeral chat. |
-| [D07](tickets/d07.md) | Report denominator, imperial distance, today-with-no-data status precedence, rounding and reopening/recreation behavior are not settled. | Weekly aggregation, report state and QA. |
+| [D07](tickets/d07.md) | Whether past distance/kcal use the profile from that day or the current profile (including same-day edits and required stored inputs/metrics); report denominator, imperial distance, today-with-no-data status precedence, rounding and reopening/recreation behavior are not settled. | M2 ledger schema and metrics, weekly aggregation, report state and QA. |
 
 The PDF introductory "up to 840 dp" wording overlaps explicit wide-screen ≥840-dp sections. Draft layout tests use the explicit ≥840-dp rule (839 narrow / 840 wide); reviewers should reject a different hidden boundary.
 

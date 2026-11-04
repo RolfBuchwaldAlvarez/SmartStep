@@ -1,10 +1,10 @@
-> Frozen review context from Second Brain PR #193, commit `14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c`. That PR was unmerged at planning time. This local snapshot is for reviewing these drafts; maintain product requirements in the Second Brain, not in two places. [Extracted original PDF text](milestone-3-source.txt) is included for independent comparison; visual layout still requires the original PDF/Figma.
+> Frozen review context from Second Brain PR #193, commit `14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c`. PR #193 merged on November 4, 2026 at `8f1704d159246adce6be39c0611c1866e06f47e9`; [merged requirement](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-3.md). This local snapshot is for reviewing these drafts; maintain product requirements in the Second Brain, not in two places. [Extracted original PDF text](milestone-3-source.txt) is included for independent comparison; visual layout still requires the original PDF/Figma.
 
 # SmartStep milestone 3
 
 ## Summary
 
-Milestone 3 adds real-API activity insights and a short-lived AI Coach conversation on top of `smartstep-milestone-2` (see [review guide](../README.md)). Home insights are independent, history-free messages; chat is conversational but discarded when leaving its screen. The two AI behaviors have different output requirements.
+Milestone 3 adds real-API activity insights and a short-lived AI Coach conversation on top of [smartstep-milestone-2](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-2.md). Home insights are independent, history-free messages; chat is conversational but discarded when leaving its screen. The two AI behaviors have different output requirements.
 
 ## Canonical state
 
@@ -44,13 +44,13 @@ Milestone 3 adds real-API activity insights and a short-lived AI Coach conversat
 - **Starter while offline:** the document requires an automatic starter on entry but also an offline mode; it does not say whether to defer the starter until connectivity returns or show a particular placeholder.
 - **Session definition:** chat state is discarded on leaving/back/reopening. Configuration-change retention, process death and the exact meaning of an app session for insight refresh are not fully defined.
 - **Security and privacy:** this source does not choose API credential delivery, server/client integration or additional data-disclosure policy. Its real-API requirement does not authorize embedding provider secrets in an app or sending extra personal data. Keep such implementation decisions separate from this product specification.
-- Shared visual/architecture rules: `smartstep` (see [review guide](../README.md)). A product test must exercise a real integration for acceptance of SS-M3-03; deterministic test doubles in isolated automated tests are a separate engineering concern.
+- Shared visual/architecture rules: [smartstep](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep.md). A product test must exercise a real integration for acceptance of SS-M3-03; deterministic test doubles in isolated automated tests are a separate engineering concern.
 
 ## Relationships
 
-- `smartstep` (see [review guide](../README.md)) — product scope, source authority and QA traceability.
-- `smartstep-milestone-2` (see [review guide](../README.md)) — activity context and metrics.
-- `smartstep-milestone-4` (see [review guide](../README.md)) — later weekly analytics.
+- [smartstep](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep.md) — product scope, source authority and QA traceability.
+- [smartstep-milestone-2](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-2.md) — activity context and metrics.
+- [smartstep-milestone-4](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-4.md) — later weekly analytics.
 
 ## Sources
 

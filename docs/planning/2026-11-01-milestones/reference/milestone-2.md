@@ -1,10 +1,10 @@
-> Frozen review context from Second Brain PR #193, commit `14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c`. That PR was unmerged at planning time. This local snapshot is for reviewing these drafts; maintain product requirements in the Second Brain, not in two places. [Extracted original PDF text](milestone-2-source.txt) is included for independent comparison; visual layout still requires the original PDF/Figma.
+> Frozen review context from Second Brain PR #193, commit `14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c`. PR #193 merged on November 4, 2026 at `8f1704d159246adce6be39c0611c1866e06f47e9`; [merged requirement](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-2.md). This local snapshot is for reviewing these drafts; maintain product requirements in the Second Brain, not in two places. [Extracted original PDF text](milestone-2-source.txt) is included for independent comparison; visual layout still requires the original PDF/Figma.
 
 # SmartStep milestone 2
 
 ## Summary
 
-Milestone 2 extends `smartstep-milestone-1` (see [review guide](../README.md)) with real tracking controls, editable counts, calculated metrics, seven-day insights and a foreground notification. Requirements below preserve the supplied calculation and update rules; they do not claim completed tracking behavior.
+Milestone 2 extends [smartstep-milestone-1](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-1.md) with real tracking controls, editable counts, calculated metrics, seven-day insights and a foreground notification. Requirements below preserve the supplied calculation and update rules; they do not claim completed tracking behavior.
 
 ## Canonical state
 
@@ -48,13 +48,13 @@ Milestone 2 extends `smartstep-milestone-1` (see [review guide](../README.md)) w
 - **Pause and sensor restart:** the source requires no accumulation during pause, but does not prescribe resume-baseline, device-reboot/counter-reset, time-zone or missed-midnight algorithms. Those need engineering decisions and ticket-specific acceptance tests, not claims that the PDF already settled them.
 - **Frozen metrics vs edits:** the PDF both mandates immediate recalculation for edits/resets and freezes all metrics while paused. Precedence for an edit/reset during pause is not specified.
 - **Notifications/platform:** the text calls the notification persistent while also allowing swipe dismissal; preserve both observed behaviors for platform-aware QA. The PDF's notification-permission wording is a specification statement, not a fresh verification of Android foreground-service rules.
-- Shared visual breakpoint/icon rules are in `smartstep` (see [review guide](../README.md)). This PDF does not give additional milestone-2-specific wide-layout dimensions.
+- Shared visual breakpoint/icon rules are in [smartstep](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep.md). This PDF does not give additional milestone-2-specific wide-layout dimensions.
 
 ## Relationships
 
-- `smartstep` (see [review guide](../README.md)) — entry point and QA/source rules.
-- `smartstep-milestone-1` (see [review guide](../README.md)) — prerequisite UI/profile/permission behavior.
-- `smartstep-milestone-3` (see [review guide](../README.md)), `smartstep-milestone-4` (see [review guide](../README.md)) — consumers of tracking and metric data.
+- [smartstep](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep.md) — entry point and QA/source rules.
+- [smartstep-milestone-1](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-1.md) — prerequisite UI/profile/permission behavior.
+- [smartstep-milestone-3](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-3.md), [smartstep-milestone-4](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-4.md) — consumers of tracking and metric data.
 
 ## Sources
 

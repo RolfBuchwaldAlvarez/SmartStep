@@ -1,4 +1,4 @@
-> Frozen review context from Second Brain PR #193, commit `14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c`. That PR was unmerged at planning time. This local snapshot is for reviewing these drafts; maintain product requirements in the Second Brain, not in two places. [Extracted original PDF text](milestone-4-source.txt) is included for independent comparison; visual layout still requires the original PDF/Figma.
+> Frozen review context from Second Brain PR #193, commit `14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c`. PR #193 merged on November 4, 2026 at `8f1704d159246adce6be39c0611c1866e06f47e9`; [merged requirement](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-4.md). This local snapshot is for reviewing these drafts; maintain product requirements in the Second Brain, not in two places. [Extracted original PDF text](milestone-4-source.txt) is included for independent comparison; visual layout still requires the original PDF/Figma.
 
 # SmartStep milestone 4
 
@@ -33,13 +33,13 @@ Milestone 4 adds a read-only weekly activity report with week navigation and Ste
 - **Today with no data:** the clock rule for today and minus/no-data rule overlap. Resolve icon/highlight precedence when a ticket needs that case. Recorded zero activity and absence of a record should not be silently equated.
 - **Recreation vs reopening:** Back discards report state; the source does not explicitly settle rotation/process-death restoration or say which tab to restore after reopening beyond the default Steps statement.
 - No bounds for earliest historical week, cross-year date-label format, or live report update while remaining on-screen are specified.
-- Shared visual/source/architecture conventions are in `smartstep` (see [review guide](../README.md)).
+- Shared visual/source/architecture conventions are in [smartstep](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep.md).
 
 ## Relationships
 
-- `smartstep` (see [review guide](../README.md)) — product entry point and QA traceability.
-- `smartstep-milestone-2` (see [review guide](../README.md)) — metrics, historical goals and rolling home averages.
-- `smartstep-milestone-3` (see [review guide](../README.md)) — preceding AI milestone; report behavior remains a distinct feature.
+- [smartstep](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep.md) — product entry point and QA traceability.
+- [smartstep-milestone-2](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-2.md) — metrics, historical goals and rolling home averages.
+- [smartstep-milestone-3](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-3.md) — preceding AI milestone; report behavior remains a distinct feature.
 
 ## Sources
 

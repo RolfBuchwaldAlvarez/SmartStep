@@ -1,10 +1,10 @@
-> Frozen review context from Second Brain PR #193, commit `14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c`. That PR was unmerged at planning time. This local snapshot is for reviewing these drafts; maintain product requirements in the Second Brain, not in two places. [Extracted original PDF text](milestone-1-source.txt) is included for independent comparison; visual layout still requires the original PDF/Figma.
+> Frozen review context from Second Brain PR #193, commit `14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c`. PR #193 merged on November 4, 2026 at `8f1704d159246adce6be39c0611c1866e06f47e9`; [merged requirement](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-1.md). This local snapshot is for reviewing these drafts; maintain product requirements in the Second Brain, not in two places. [Extracted original PDF text](milestone-1-source.txt) is included for independent comparison; visual layout still requires the original PDF/Figma.
 
 # SmartStep milestone 1
 
 ## Summary
 
-Milestone 1 establishes initial launch, profile input, home/navigation and the permission/settings flows. These are acceptance requirements distilled from the owner's PDF, not assertions about what the app already implements. The dated starting point is `2026-11-01-smartstep-requirements-baseline` (see [review guide](../README.md)).
+Milestone 1 establishes initial launch, profile input, home/navigation and the permission/settings flows. These are acceptance requirements distilled from the owner's PDF, not assertions about what the app already implements. The dated starting point is [2026-11-01-smartstep-requirements-baseline](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/events/2026-11-01-smartstep-requirements-baseline.md).
 
 ## Canonical state
 
@@ -53,12 +53,12 @@ Milestone 1 establishes initial launch, profile input, home/navigation and the p
 - **Unspecified picker bounds:** no height/weight ranges, step-goal increment or explicit first saved goal is prescribed. `/6000 Steps` is the supplied home example; a numeric goal-default decision should identify whether it is normative.
 - **Platform-sensitive requirements:** permission re-prompting/settings and explicit exit need verification against the app's target Android version. The specification is product intent, not proof that Android grants a universal "stop all processes" capability. Document any necessary owner-approved adaptation rather than quietly changing acceptance.
 - **Settings completion:** the PDF says settings reuses onboarding logic but does not explicitly define its save-button label or return destination. Do not infer that it re-runs first-launch permission prompts.
-- Apply shared visual/architecture constraints in `smartstep` (see [review guide](../README.md)). No extra QA requirement is inferred from a decorative screen element.
+- Apply shared visual/architecture constraints in [smartstep](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep.md). No extra QA requirement is inferred from a decorative screen element.
 
 ## Relationships
 
-- `smartstep` (see [review guide](../README.md)) — entry point, source authority and QA traceability.
-- `smartstep-milestone-2` (see [review guide](../README.md)) — extends this home, drawer and profile foundation.
+- [smartstep](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep.md) — entry point, source authority and QA traceability.
+- [smartstep-milestone-2](https://github.com/RolfBuchwaldAlvarez/my-ai-second-brain/blob/8f1704d159246adce6be39c0611c1866e06f47e9/20-contexts/ventures/projects/smartstep/smartstep-milestone-2.md) — extends this home, drawer and profile foundation.
 
 ## Sources
 
