@@ -30,8 +30,8 @@ Every SS-Mn identifier in the frozen milestone references is mapped below. Verif
 | [SS-M2-05](reference/milestone-2.md) | [D03](tickets/d03.md), [M2-01](tickets/m2-01.md), [M2-02](tickets/m2-02.md), [M2-03](tickets/m2-03.md), [M2-07](tickets/m2-07.md) | [M2-18](tickets/m2-18.md) |
 | [SS-M2-06](reference/milestone-2.md) | [D03](tickets/d03.md), [M2-04](tickets/m2-04.md), [M2-16](tickets/m2-16.md) | [M2-18](tickets/m2-18.md) |
 | [SS-M2-07](reference/milestone-2.md) | [M2-08](tickets/m2-08.md), [M2-10](tickets/m2-10.md) | [M2-18](tickets/m2-18.md) |
-| [SS-M2-08](reference/milestone-2.md) | [M2-08](tickets/m2-08.md) | [M2-18](tickets/m2-18.md) |
-| [SS-M2-09](reference/milestone-2.md) | [M2-08](tickets/m2-08.md) | [M2-18](tickets/m2-18.md) |
+| [SS-M2-08](reference/milestone-2.md) | [D07](tickets/d07.md), [M2-08](tickets/m2-08.md) | [M2-18](tickets/m2-18.md) |
+| [SS-M2-09](reference/milestone-2.md) | [D07](tickets/d07.md), [M2-08](tickets/m2-08.md) | [M2-18](tickets/m2-18.md) |
 | [SS-M2-10](reference/milestone-2.md) | [D04](tickets/d04.md), [M2-01](tickets/m2-01.md), [M2-09](tickets/m2-09.md) | [M2-18](tickets/m2-18.md) |
 | [SS-M2-11](reference/milestone-2.md) | [D04](tickets/d04.md), [M2-04](tickets/m2-04.md), [M2-10](tickets/m2-10.md), [M2-16](tickets/m2-16.md) | [M2-18](tickets/m2-18.md) |
 | [SS-M2-12](reference/milestone-2.md) | [D04](tickets/d04.md), [M2-11](tickets/m2-11.md), [M2-12](tickets/m2-12.md) | [M2-18](tickets/m2-18.md) |
