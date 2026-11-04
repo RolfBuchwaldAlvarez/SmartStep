@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 
+FINAL_MARK = "<!-- factory-metrics-final "
 MARK = "<!-- factory-metrics "
 FAILED = {"failure", "timed_out", "action_required", "startup_failure"}
 
@@ -43,7 +44,7 @@ def summarize(ticket, points, snapshots, now, severity_of, review_findings):
                 failures.add(check["id"])
     # Missing timestamps mean unknown duration, not a zero-length run.
     complete_dates = len(starts) == len(snapshots) and (bool(open_prs) or len(ends) == len(snapshots))
-    duration = max(0, int((now if open_prs else max(ends)) - min(starts))) if snapshots and complete_dates else None
+    duration = max(0, int(max(ends) - min(starts))) if snapshots and complete_dates and not open_prs else None
     return {"version": 1, "ticket": ticket, "points": points,
             "pull_requests": sorted(s["pr"]["number"] for s in snapshots), "open_pull_requests": sorted(open_prs),
             "levels_recorded": sorted(levels), "review_rounds": len(rounds),

@@ -45,6 +45,7 @@ Uses only the workflow's own token: labels and comments, nothing else.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -353,6 +354,25 @@ def sync_ticket_metrics(gh, ready: list[dict], now: float, config: dict) -> None
         attempts = [p for p in history if linked_ticket(p) == ticket["number"] and author_of(p["user"]["login"])]
         if not attempts:
             continue
+        # A closed ticket is a historical snapshot once publication and CI have finished.
+        # Inventory still detects new/reopened attempts without reading their evidence.
+        finalizable = ticket.get("state") == "closed" and all(p.get("state") == "closed" for p in attempts)
+        checkpoint, checkpoint_body = None, None
+        if finalizable:
+            signature = {"version": 1, "ticket": {k: ticket.get(k) for k in ("number", "closed_at")},
+                         "points": routing.points_of({l["name"] for l in ticket["labels"]}),
+                         "judges": config["judges"], "judges_per_pr": config["judges_per_pr"],
+                         "attempts": [{"author": p["user"]["login"], "head": p["head"]["sha"],
+                                       **{k: p.get(k) for k in
+                                          ("number", "body", "created_at", "closed_at", "state")}}
+                                      for p in sorted(attempts, key=lambda p: p["number"])]}
+            digest = hashlib.sha256(json.dumps(signature, sort_keys=True).encode()).hexdigest()
+            checkpoint_body = factory_metrics.FINAL_MARK + digest + " -->"
+            checkpoint = next((c for c in gh.all(f"/issues/{ticket['number']}/comments")
+                               if c.get("user", {}).get("login") == routing.STATE_WRITER
+                               and (c.get("body") or "").startswith(factory_metrics.FINAL_MARK)), None)
+            if checkpoint and checkpoint["body"] == checkpoint_body:
+                continue
         implemented = {author_of(p["user"]["login"]) for p in attempts}
         snapshots, comments_by_pr = [], {}
         for pr in attempts:
@@ -384,6 +404,14 @@ def sync_ticket_metrics(gh, ready: list[dict], now: float, config: dict) -> None
                 gh.call("POST", f"/issues/{number}/comments", {"body": body})
             elif existing["body"] != body:
                 gh.call("PATCH", f"/issues/comments/{existing['id']}", {"body": body})
+        # Commit the checkpoint last: interrupted publication must be retried, never skipped.
+        if finalizable and all(check.get("status") == "completed"
+                               for snapshot in snapshots for check in snapshot["checks"]
+                               if check.get("name") != OWN_CHECK):
+            if checkpoint is None:
+                gh.call("POST", f"/issues/{ticket['number']}/comments", {"body": checkpoint_body})
+            elif checkpoint["body"] != checkpoint_body:
+                gh.call("PATCH", f"/issues/comments/{checkpoint['id']}", {"body": checkpoint_body})
 
 
 def reconcile(gh, config: dict, now: float) -> None:

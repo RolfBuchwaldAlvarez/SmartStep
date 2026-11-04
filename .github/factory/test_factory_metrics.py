@@ -27,10 +27,10 @@ class Metrics(unittest.TestCase):
         self.assertEqual((result["points"], result["levels_recorded"], result["duration_seconds"]), (3, [5], 3600))
         self.assertEqual(result, self.summary([self.snapshot()]))
 
-    def test_open_duration_uses_now_and_closed_duration_freezes(self):
+    def test_open_duration_is_unknown_and_closed_duration_freezes(self):
         snap = self.snapshot()
         snap["pr"].update(state="open", closed_at=None)
-        self.assertEqual(self.summary([snap])["duration_seconds"], 7200)
+        self.assertIsNone(self.summary([snap])["duration_seconds"])
         self.assertEqual(self.summary([self.snapshot()])["duration_seconds"], 3600)
 
     def test_all_attempts_contribute_and_unknown_dates_are_not_zero(self):
@@ -120,3 +120,112 @@ class Integration(unittest.TestCase):
         body = gh.calls[0][2]['body']
         result = json.loads(body[len(m.MARK):body.index(' -->')])
         self.assertEqual(result['ci_failures'], 1)
+
+class ReconcileBudget(unittest.TestCase):
+    def setup_ticket(self):
+        import test_conductor as t
+        ticket = t.item(5, 'factory:ready', 'points:3', state='closed')
+        attempt = t.pr(state='closed', closed_at='2027-01-15T09:00:00Z')
+        return t, ticket, attempt
+
+    def github(self, t, attempts):
+        class Recording(t.FakeGitHub):
+            def __init__(self):
+                super().__init__(lists={'/pulls?state=all': attempts})
+                self.reads = []
+            def all(self, path):
+                self.reads.append(path)
+                return super().all(path)
+            def call(self, method, path, body=None):
+                result = super().call(method, path, body)
+                if method == 'POST' and path.endswith('/comments'):
+                    self.lists.setdefault(path, []).append(
+                        {'id': len(self.calls), 'user': {'login': routing.STATE_WRITER}, **body})
+                return result
+        return Recording()
+
+    def test_final_ticket_reads_only_checkpoint_and_inventory(self):
+        t, ticket, attempt = self.setup_ticket()
+        gh = self.github(t, [attempt])
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        gh.reads.clear()
+        gh.calls.clear()
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW + 100, t.CONFIG)
+        self.assertEqual(gh.reads, ['/pulls?state=all', '/issues/5/comments'])
+        self.assertEqual(gh.calls, [])
+
+    def test_reopened_ticket_pr_new_attempt_points_and_config_invalidate_final(self):
+        import copy
+        for change in ('ticket', 'pr', 'attempt', 'points', 'config'):
+            with self.subTest(change=change):
+                t, ticket, attempt = self.setup_ticket()
+                config = copy.deepcopy(t.CONFIG)
+                gh = self.github(t, [attempt])
+                t.c.sync_ticket_metrics(gh, [ticket], t.NOW, config)
+                if change == 'ticket': ticket['state'] = 'open'
+                if change == 'pr': attempt['state'] = 'open'
+                if change == 'attempt': gh.lists['/pulls?state=all'].append(t.pr(number=10))
+                if change == 'points': ticket['labels'].append({'name': 'points:5'})
+                if change == 'config': config['judges_per_pr'] = 1
+                gh.reads.clear()
+                t.c.sync_ticket_metrics(gh, [ticket], t.NOW + 100, config)
+                self.assertIn('/pulls/9/reviews', gh.reads)
+
+    def test_untrusted_checkpoint_cannot_skip_evidence(self):
+        t, ticket, attempt = self.setup_ticket()
+        gh = self.github(t, [attempt])
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        for comment in gh.lists.get('/issues/5/comments', []):
+            comment['user']['login'] = 'someone'
+        gh.reads.clear()
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        self.assertIn('/pulls/9/reviews', gh.reads)
+
+    def test_pending_checks_do_not_finalize(self):
+        t, ticket, attempt = self.setup_ticket()
+        gh = self.github(t, [attempt])
+        gh.lists['/commits/head/check-runs?filter=all'] = [{'id': 1, 'name': 'ci', 'status': 'in_progress'}]
+        # Use the fixture's actual head.
+        gh.lists[f"/commits/{attempt['head']['sha']}/check-runs?filter=all"] = gh.lists['/commits/head/check-runs?filter=all']
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        gh.reads.clear()
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        self.assertIn('/pulls/9/reviews', gh.reads)
+
+    def test_open_metrics_do_not_change_as_clock_advances(self):
+        t, ticket, attempt = self.setup_ticket()
+        ticket['state'] = attempt['state'] = 'open'
+        gh = self.github(t, [attempt])
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        gh.calls.clear()
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW + 100, t.CONFIG)
+        self.assertEqual(gh.calls, [])
+
+    def test_partial_publication_never_records_completion(self):
+        t, ticket, attempt = self.setup_ticket()
+        second = dict(attempt, number=10)
+        gh = self.github(t, [attempt, second])
+        original = gh.call
+        def fail_second(method, path, body=None):
+            if path == '/issues/10/comments':
+                raise RuntimeError('publication failed')
+            return original(method, path, body)
+        gh.call = fail_second
+        with self.assertRaisesRegex(RuntimeError, 'publication failed'):
+            t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        self.assertNotIn('/issues/5/comments', gh.lists)
+        gh.call = original
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        self.assertIn('/issues/5/comments', gh.lists)
+        self.assertEqual(len(gh.lists['/issues/9/comments']), 1)
+        self.assertEqual(len(gh.lists['/issues/10/comments']), 1)
+
+    def test_repository_metadata_and_comment_timestamps_do_not_invalidate(self):
+        t, ticket, attempt = self.setup_ticket()
+        gh = self.github(t, [attempt])
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW, t.CONFIG)
+        attempt['head']['repo'] = {'pushed_at': 'later'}
+        attempt['updated_at'] = ticket['updated_at'] = 'later'
+        gh.reads.clear()
+        t.c.sync_ticket_metrics(gh, [ticket], t.NOW + 100, t.CONFIG)
+        self.assertEqual(gh.reads, ['/pulls?state=all', '/issues/5/comments'])
