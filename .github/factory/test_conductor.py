@@ -62,13 +62,43 @@ class Judges(unittest.TestCase):
         config = dict(CONFIG, judges=["hermes", "hermes", "claude"])
         self.assertEqual(c.judges_for("codex", config), ["hermes", "claude"])
 
-    def test_too_few_eligible_judges_never_auto_merge_or_fix(self):
-        for checks in ("green", "red", "pending"):
-            for author in ("codex", "owner"):
-                with self.subTest(checks=checks, author=author):
-                    self.assertEqual(c.pr_labels(pr(author), [PROOFREAD, review("hermes", "APPROVED"),
-                                                              review("claude", "APPROVED")],
-                                                 checks, NOW, CONFIG, {"codex", "claude"}), {"needs:owner"})
+    def test_remaining_judge_is_requested_and_findings_get_a_fix(self):
+        self.assertEqual(c.pr_labels(pr(), [PROOFREAD], "green", NOW, CONFIG, {"claude"}),
+                         {"needs:owner", "next:judge:hermes"})
+        self.assertEqual(c.pr_labels(pr(), [PROOFREAD, review("hermes")], "green", NOW, CONFIG, {"claude"}),
+                         {"needs:owner", "next:judge:hermes", "next:fix:codex"})
+
+    def test_owner_fills_only_one_missing_seat_on_the_current_head(self):
+        approved = [PROOFREAD, review("hermes", "APPROVED")]
+        owner = dict(review("owner", "APPROVED"), user={"login": c.OWNER_LOGIN})
+        self.assertEqual(c.pr_labels(pr(), approved, "green", NOW, CONFIG, {"claude"}), {"needs:owner"})
+        for checks, expected in (("green", {"next:merge:codex"}), ("red", {"next:fix:codex"}),
+                                 ("pending", set())):
+            self.assertEqual(c.pr_labels(pr(), approved + [owner], checks, NOW, CONFIG, {"claude"}), expected)
+        for invalid in (dict(owner, commit_id=OLD), dict(owner, user={"login": "stranger"}),
+                        dict(owner, state="DISMISSED")):
+            self.assertEqual(c.pr_labels(pr(), approved + [invalid], "green", NOW, CONFIG, {"claude"}),
+                             {"needs:owner"})
+        self.assertEqual(c.pr_labels(pr(), approved + [owner, dict(owner, state="CHANGES_REQUESTED")],
+                                     "green", NOW, CONFIG, {"claude"}), {"needs:owner", "next:fix:codex"})
+        self.assertEqual(c.pr_labels(pr(), approved + [owner], "green", NOW, CONFIG,
+                                     {"claude", "hermes"}), {"needs:owner"})
+        self.assertEqual(c.pr_labels(pr(), approved + [owner], "green", NOW, CONFIG,
+                                     {"claude", "owner"}), {"needs:owner"})
+        self.assertEqual(c.pr_labels(pr("owner"), [review("hermes", "APPROVED"), owner],
+                                     "green", NOW, CONFIG, {"codex", "claude"}), {"needs:owner"})
+
+    def test_shortfall_keeps_ci_fix_and_round_limit_behavior(self):
+        self.assertEqual(c.pr_labels(pr(), [PROOFREAD, review("hermes", "APPROVED")],
+                                     "red", NOW, CONFIG, {"claude"}), {"needs:owner", "next:fix:codex"})
+        rounds = [review("hermes", commit=x) for x in (OLD, OLD, HEAD)]
+        self.assertEqual(c.pr_labels(pr(), [PROOFREAD] + rounds, "green", NOW, CONFIG, {"claude"}),
+                         {"needs:owner"})
+
+    def test_owner_request_does_not_bypass_complexity_routing(self):
+        labels = {"needs:owner", "next:fix:codex", "next:judge:hermes"}
+        self.assertEqual(c.routed(labels, 5, 0, "major", "high"), labels | {"level:3", "risk:high"})
+        self.assertEqual(c.routed(labels, 5, 13, "major", "high"), {"needs:split"})
 
     def test_reconcile_includes_closed_and_draft_ticket_implementations(self):
         ticket = item(5, "factory:ready", "points:3")
@@ -365,6 +395,30 @@ class Sync(unittest.TestCase):
         gh2 = FakeGitHub()
         c.sync_labels(gh2, 9, {"needs:owner"}, {"needs:owner"}, {"needs:owner"})
         self.assertEqual(gh2.calls, [])
+
+    def test_owner_review_request_has_a_specific_comment(self):
+        gh = FakeGitHub()
+        c.sync_labels(gh, 9, set(), {"needs:owner", "next:judge:hermes"},
+                      {"needs:owner", "next:judge:hermes"}, c.OWNER_REVIEW_COMMENT)
+        bodies = [b["body"] for m, path, b in gh.calls if path.endswith("/comments")]
+        self.assertIn("eligible", bodies[0])
+        self.assertNotIn("round limit", bodies[0])
+        self.assertIn("round limit", c.NEEDS_COMMENTS["needs:owner"])
+        self.assertNotIn("eligible", c.NEEDS_COMMENTS["needs:owner"])
+
+    def test_owner_comment_updates_once_when_the_cause_changes(self):
+        old = {"user": {"login": "github-actions[bot]"},
+               "body": f"@{c.OWNER_LOGIN} the factory needs you here: {c.OWNER_REVIEW_COMMENT}"}
+        gh = FakeGitHub(lists={"/issues/9/comments": [old]})
+        c.sync_labels(gh, 9, {"needs:owner"}, {"needs:owner"}, {"needs:owner"},
+                      c.NEEDS_COMMENTS["needs:owner"])
+        self.assertEqual(len(gh.calls), 1)
+        self.assertIn("round limit", gh.calls[0][2]["body"])
+        gh.lists["/issues/9/comments"].append(dict(old, body=gh.calls[0][2]["body"]))
+        gh.calls.clear()
+        c.sync_labels(gh, 9, {"needs:owner"}, {"needs:owner"}, {"needs:owner"},
+                      c.NEEDS_COMMENTS["needs:owner"])
+        self.assertEqual(gh.calls, [])
 
     def test_unknown_labels_are_created_first(self):
         gh = FakeGitHub()
