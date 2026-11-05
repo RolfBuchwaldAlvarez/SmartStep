@@ -393,7 +393,7 @@ def sync_ticket_metrics(gh, ready: list[dict], now: float, config: dict) -> None
             checks = [run for head in sorted(heads) for run in gh.all(f"/commits/{head}/check-runs?filter=all")]
             snapshots.append({"pr": pr, "state": state, "reviews": reviews, "inline": inline, "checks": checks})
         metrics = factory_metrics.summarize(ticket["number"], routing.points_of({l["name"] for l in ticket["labels"]}),
-                                             snapshots, now, routing.severity_of, routing.review_findings)
+                                             snapshots, routing.severity_of, routing.review_findings)
         body = (factory_metrics.MARK + json.dumps(metrics, sort_keys=True, separators=(",", ":")) + " -->\n"
                 "Factory ticket metrics (observed GitHub evidence, not agent runtime). "
                 "Definitions and limitations: `.github/factory/README.md`, Ticket metrics.")

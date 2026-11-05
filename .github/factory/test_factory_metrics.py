@@ -17,8 +17,7 @@ class Metrics(unittest.TestCase):
                            {"id": 11, "name": "conduct", "conclusion": "failure"}]}
 
     def summary(self, snapshots):
-        return m.summarize(5, 3, snapshots, m.timestamp("2026-11-01T02:00:00Z"),
-                           routing.severity_of, routing.review_findings)
+        return m.summarize(5, 3, snapshots, routing.severity_of, routing.review_findings)
 
     def test_counts_distinct_evidence_and_summary_is_not_an_extra_finding(self):
         result = self.summary([self.snapshot()])
@@ -141,6 +140,11 @@ class ReconcileBudget(unittest.TestCase):
                 if method == 'POST' and path.endswith('/comments'):
                     self.lists.setdefault(path, []).append(
                         {'id': len(self.calls), 'user': {'login': routing.STATE_WRITER}, **body})
+                if method == 'PATCH' and path.startswith('/issues/comments/'):
+                    for comments in self.lists.values():
+                        for comment in comments:
+                            if comment.get('id') == int(path.rsplit('/', 1)[1]):
+                                comment.update(body)
                 return result
         return Recording()
 
@@ -162,6 +166,8 @@ class ReconcileBudget(unittest.TestCase):
                 config = copy.deepcopy(t.CONFIG)
                 gh = self.github(t, [attempt])
                 t.c.sync_ticket_metrics(gh, [ticket], t.NOW, config)
+                checkpoint = gh.lists['/issues/5/comments'][0]
+                old_body = checkpoint['body']
                 if change == 'ticket': ticket['state'] = 'open'
                 if change == 'pr': attempt['state'] = 'open'
                 if change == 'attempt': gh.lists['/pulls?state=all'].append(t.pr(number=10))
@@ -170,6 +176,19 @@ class ReconcileBudget(unittest.TestCase):
                 gh.reads.clear()
                 t.c.sync_ticket_metrics(gh, [ticket], t.NOW + 100, config)
                 self.assertIn('/pulls/9/reviews', gh.reads)
+                if change in ('points', 'config'):
+                    fresh = self.github(t, gh.lists['/pulls?state=all'])
+                    t.c.sync_ticket_metrics(fresh, [ticket], t.NOW + 100, config)
+                    expected_body = fresh.lists['/issues/5/comments'][0]['body']
+                    self.assertNotEqual(expected_body, old_body)
+                    self.assertIn(('PATCH', f"/issues/comments/{checkpoint['id']}",
+                                   {'body': expected_body}), gh.calls)
+                    self.assertEqual(checkpoint['body'], expected_body)
+                    gh.reads.clear()
+                    gh.calls.clear()
+                    t.c.sync_ticket_metrics(gh, [ticket], t.NOW + 200, config)
+                    self.assertEqual(gh.reads, ['/pulls?state=all', '/issues/5/comments'])
+                    self.assertEqual(gh.calls, [])
 
     def test_untrusted_checkpoint_cannot_skip_evidence(self):
         t, ticket, attempt = self.setup_ticket()

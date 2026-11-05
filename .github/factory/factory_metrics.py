@@ -11,7 +11,7 @@ def timestamp(value):
     return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp() if value else None
 
 
-def summarize(ticket, points, snapshots, now, severity_of, review_findings):
+def summarize(ticket, points, snapshots, severity_of, review_findings):
     """Count distinct source records, not repeated conductor observations or head labels.
 
     Snapshots contain only eligible judges' real reviews; proofreads are excluded by the caller.
@@ -43,7 +43,7 @@ def summarize(ticket, points, snapshots, now, severity_of, review_findings):
             if check.get("name") != "conduct" and check.get("conclusion") in FAILED:
                 failures.add(check["id"])
     # Missing timestamps mean unknown duration, not a zero-length run.
-    complete_dates = len(starts) == len(snapshots) and (bool(open_prs) or len(ends) == len(snapshots))
+    complete_dates = len(starts) == len(snapshots) and len(ends) == len(snapshots)
     duration = max(0, int(max(ends) - min(starts))) if snapshots and complete_dates and not open_prs else None
     return {"version": 1, "ticket": ticket, "points": points,
             "pull_requests": sorted(s["pr"]["number"] for s in snapshots), "open_pull_requests": sorted(open_prs),
