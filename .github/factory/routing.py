@@ -201,6 +201,31 @@ def estimate_of(body: str) -> int | None:
     return int(match.group(1)) if match and int(match.group(1)) in FIB else None
 
 
+FINDINGS = re.compile(r"^[\s*_]*Ticket findings:[\s*_]*", re.IGNORECASE | re.MULTILINE)
+FINDING_CATEGORIES = ("UNTESTABLE_CRITERION", "SCOPE_TOO_BROAD", "MISSING_DEPENDENCY", "CONTRADICTS_SPEC", "UNCLEAR")
+FINDING = re.compile(r"^[\s*_\-+\d.)]*`?(" + "|".join(FINDING_CATEGORIES) + r")\b`?[\s*_]*[:\u2013\u2014-]?\s*(\S.*)$")
+REVISED = re.compile(r"^[\s*_]*Revised:", re.IGNORECASE)
+
+
+def findings_of(body: str) -> list[tuple[str, str]] | None:
+    """The ticket findings in an estimate comment's `Ticket findings:` part: [] for `none` (or only findings
+    without a detail, which do not count), [(category, detail), ...] otherwise, None without the part."""
+    match = FINDINGS.search(body or "")
+    if not match:
+        return None
+    found = []
+    for line in (body or "")[match.end():].splitlines():
+        finding = FINDING.match(line)
+        if finding and finding.group(2).strip(" *_`:\u2013\u2014-"):
+            found.append((finding.group(1), finding.group(2).strip()))
+    return found
+
+
+def revised(body: str) -> bool:
+    """A drafter's answer to ticket findings: a comment starting `Revised:` (not quoted)."""
+    return bool(REVISED.match(body or ""))
+
+
 def poker(estimates: dict) -> tuple[str, int | None]:
     """Planning poker over the estimators' points: ("agree", the higher value) when they are at most one
     Fibonacci step apart, ("differ", None) otherwise, ("open", None) while one is missing."""

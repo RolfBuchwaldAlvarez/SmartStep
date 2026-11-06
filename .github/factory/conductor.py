@@ -25,8 +25,12 @@ on the head, checks) and sets or removes labels so that they match:
           factory:ready                  -> none of the conductor's labels
 
 Planning poker: a ticket labeled factory:estimate (and no points yet) gets
-next:estimate:<agent> for each of `estimators`; each posts "Estimate: <n> – reason"
-without reading the others'. At most one Fibonacci step apart: the conductor sets
+next:estimate:<agent> for the first two of `estimators` other than its drafter (the
+ticket's author); each posts "Estimate: <n> – reason" plus a "Ticket findings:" part
+(`none` or findings) without reading the others'. Findings from either: no points,
+next:revise:<drafter>; the drafter answers with a "Revised:" comment, which starts a
+new round (after max_rounds rounds with findings, or for a ticket the owner drafted:
+needs:owner; the owner's "Revised:" starts a new round on any ticket). No findings, at most one Fibonacci step apart: the conductor sets
 points:<higher> and asks the owner to approve; further apart: needs:estimate.
 
 Complexity routing (routing.py, olympus-agents docs/complexity-routing.md):
@@ -72,7 +76,10 @@ MANAGED = ("next:", "needs:owner", "needs:points", "needs:split", "needs:estimat
 LABEL_COLORS = {"next:": "1d76db", "needs:": "d93f0b", "step:acceptance": "0e8a16", "level:": "c5def5",
                 "risk:": "fbca04"}
 NEEDS_COMMENTS = {
-    "needs:owner": "a judge reached the round limit without approving. The agents pause until you decide.",
+    "needs:owner": "a round limit was reached (a judge without approving, or planning poker with ticket findings "
+                   "in every round), or planning poker found ticket findings on a ticket you drafted. The agents "
+                   "pause until you decide: on a ticket, set the points yourself, or revise it and post a comment "
+                   "starting with `Revised:` to start a new round.",
     "needs:points": "this ticket has no valid `points:<n>` label (1, 2, 3, 5, 8, 13 or 21). "
                     "Nothing is implemented until it has one.",
     "needs:estimate": "planning poker has no result: the estimates differ by more than one Fibonacci step "
@@ -181,8 +188,34 @@ def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset(), t
     return {"needs:split"} if level >= routing.SPLIT_AT else {f"next:implement:{implementer}", f"level:{level}"}
 
 
-def estimate_labels(labels: set[str], estimates: dict) -> tuple[set[str], int | None]:
-    """Planning poker on a `factory:estimate` ticket without points: (labels, points to set or None). Pure."""
+def estimators_for(drafter: str | None, config: dict) -> list[str]:
+    """The ticket's estimators: the first two of `estimators` other than its drafter."""
+    return [agent for agent in config["estimators"] if agent != drafter][:2]
+
+
+def poker_round(comments: list[dict], estimators: list[str], drafter: str | None) -> tuple[dict, dict, int]:
+    """The current poker round from a ticket's comments, oldest first: (estimates, findings, earlier rounds).
+    Each `Revised:` comment by the drafter or the owner ends a round; only votes after the last one count. A
+    vote is a comment with both an `Estimate:` line and a `Ticket findings:` part; an agent's later vote
+    replaces its earlier one. Pure."""
+    rounds, start = 0, 0
+    for index, comment in enumerate(comments):
+        author = author_of(comment["user"]["login"])
+        if author and author in (drafter, "owner") and routing.revised(comment.get("body")):
+            rounds, start = rounds + 1, index + 1
+    estimates, findings = {agent: None for agent in estimators}, {agent: [] for agent in estimators}
+    for comment in comments[start:]:
+        agent, body = agent_of(comment["user"]["login"]), comment.get("body")
+        points, found = routing.estimate_of(body), routing.findings_of(body)
+        if agent in estimates and points is not None and found is not None:
+            estimates[agent], findings[agent] = points, found
+    return estimates, findings, rounds
+
+
+def estimate_labels(labels: set[str], estimates: dict, findings: dict | None = None, rounds: int = 0,
+                    drafter: str | None = None, max_rounds: int = 3) -> tuple[set[str], int | None]:
+    """Planning poker on a `factory:estimate` ticket without points: (labels, points to set or None). Pure.
+    Ticket findings come before the size: with findings no points are set, also when the estimates differ."""
     if any(l.startswith("points:") for l in labels):
         # Valid points end the poker; conflicting or invalid ones go to the owner, not into another round.
         return (set() if routing.points_of(labels) is not None else {"needs:points"}), None
@@ -191,6 +224,10 @@ def estimate_labels(labels: set[str], estimates: dict) -> tuple[set[str], int | 
     state, points = routing.poker(estimates)
     if state == "open":
         return {f"next:estimate:{agent}" for agent, value in estimates.items() if value is None}, None
+    if any((findings or {}).values()):
+        if drafter in (None, "owner") or rounds + 1 >= max_rounds:
+            return {"needs:owner"}, None
+        return {f"next:revise:{drafter}"}, None
     if state == "differ":
         return {"needs:estimate"}, None
     return set(), points
@@ -452,12 +489,10 @@ def reconcile(gh, config: dict, now: float) -> None:
         if issue.get("pull_request"):
             continue
         current = {l["name"] for l in issue["labels"]}
-        estimates = {agent: None for agent in config["estimators"]}
-        for comment in gh.all(f"/issues/{issue['number']}/comments"):
-            agent = agent_of(comment["user"]["login"])
-            if agent in estimates and routing.estimate_of(comment.get("body")) is not None:
-                estimates[agent] = routing.estimate_of(comment["body"])
-        desired, points = estimate_labels(current, estimates)
+        drafter = author_of((issue.get("user") or {}).get("login"))
+        estimates, findings, rounds = poker_round(gh.all(f"/issues/{issue['number']}/comments"),
+                                                  estimators_for(drafter, config), drafter)
+        desired, points = estimate_labels(current, estimates, findings, rounds, drafter, config["max_rounds"])
         if points is not None:
             gh.call("POST", f"/issues/{issue['number']}/labels", {"labels": [f"points:{points}"]})
             gh.call("POST", f"/issues/{issue['number']}/comments",

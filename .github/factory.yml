@@ -14,8 +14,9 @@ max_rounds: 3
 #   without them stays pending. Without the key every check except the
 #   conductor's own counts, and no checks at all count as green.
 required_checks: android-ci
-# estimators: the agents that estimate a factory:estimate ticket independently (planning poker).
-estimators: codex, claude
+# estimators: the agents that estimate a factory:estimate ticket independently (planning poker);
+#   a ticket gets the first two of them other than its drafter.
+estimators: codex, claude, hermes
 # Conductor understands trusted, head/level-scoped factory timeout reports.
 # Older pollers ignore this; updated pollers report timeouts only after this opt-in.
 timeout_signals: true
