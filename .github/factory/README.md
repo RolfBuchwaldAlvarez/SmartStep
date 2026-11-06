@@ -11,13 +11,15 @@ This repository is a factory repository (`../factory.yml`, my-ai-second-brain#17
 Set in `../factory.yml` (owner decision 2026-10-29):
 
 - `implementers: codex, claude` – Codex by default; a ticket label `implementer:claude` lets Claude implement it, `implementer:owner` means the owner implements it himself.
-- `judges: claude, hermes, codex` with `judges_per_pr: 2` – a PR's judges are the first two of that list other than its author, so nobody judges their own PR and there are always two judges from other model families:
+- `judges: claude, hermes, codex` with `judges_per_pr: 2` – a PR's judges are the first two distinct names from that list other than its author and everyone who authored any PR for its linked ticket (including closed or draft attempts). With no earlier implementation by another agent, the usual pairs are:
 
 | Author | Judges |
 |---|---|
 | Codex | Claude, Hermes |
 | Claude | Hermes, Codex |
 | the owner | Claude, Hermes |
+
+If ticket history leaves fewer than two eligible judges, the conductor sets `needs:owner` and keeps asking the eligible judges. Their findings still trigger fix rounds once every eligible judge has reviewed the head; red CI also triggers a fix after they approve. When exactly one seat is missing, an approval by the owner on the current head fills it, provided he authored no PR for the ticket. Automatic merging still requires every eligible judge and the owner to approve the head, plus green CI. An old or dismissed owner approval does not count. With no eligible judge, or when the owner implemented the ticket, the owner must decide how to complete the PR; his approval cannot fill two seats or approve his own work. The owner request comment names this eligibility shortage separately from a round-limit pause. Excluded agents' reviews do not count toward routing or escalation. Ticket history is read from all PRs before label writes; an API failure stops that cycle rather than assuming an empty history.
 
 A PR without a ticket (for example the owner's workflow PRs, or changes to the factory itself) is judged the same way.
 
@@ -35,7 +37,7 @@ PRs by the owner get no proofread; updating, fixing and merging them stays with 
 - **Model and effort per level** (owner decision 2026-10-31; `levels` in olympus-agents' `agents.json`): 1–2 → low, 3–5 → medium, 8–13 → high (Codex: GPT-6.1 Sol, Claude: Opus); 21 → Codex: GPT-6 Astra, high; Claude: Opus, extra high. 13 and 21 only ever split.
 - **Escalation:** CI red again after a fix round, the same judge rejecting two rounds in a row, or `complexity:underestimated` (set by the implementer) followed by a red CI or a rejection raise a floor to one Fibonacci step above the level of the round that produced the head. Fix rounds never run below the floor; at 13 the PR stops with `needs:split`. The floor and each round's level are kept in a state comment on the PR (`<!-- factory-state … -->`), so re-running never raises it twice. Only a state comment by the conductor's own identity (`github-actions[bot]`) with a valid state counts; any other is ignored.
 - **Risk:** judge labels on a diff that touches build files, the Gradle wrapper or version catalog, database schemas or migrations, the manifest, `.github/`, security code (a path containing `security`, `crypto` or `auth`, but not `author`), or more than 20 files come with `risk:high`: the judges run at high effort.
-- The pipeline's round limits and `needs:owner` come first; escalation only sets the level of a round they still allow, and `needs:split` never replaces `needs:owner`.
+- A round-limit pause (`needs:owner` alone) comes first. An owner approval request alongside judge or fix labels keeps complexity levels, risk and escalation active; `needs:split` can stop those tasks.
 - The owner's PRs get no level, no `needs:split` and no state comment: a ticket he implements himself needs no points.
 
 ### Timeout evidence

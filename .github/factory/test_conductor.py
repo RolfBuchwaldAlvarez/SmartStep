@@ -72,6 +72,94 @@ class Judges(unittest.TestCase):
         self.assertEqual(c.judges_for("owner", CONFIG), ["claude", "hermes"])
         self.assertEqual(c.judges_for("hermes", CONFIG), ["claude", "codex"])
 
+    def test_ticket_implementers_are_ineligible_even_on_other_prs(self):
+        self.assertEqual(c.judges_for("codex", CONFIG, {"claude"}), ["hermes"])
+        # The owner inherits the same ticket history; this is not just author exclusion.
+        self.assertEqual(c.judges_for("owner", CONFIG, {"codex", "claude"}), ["hermes"])
+
+    def test_duplicate_judge_names_do_not_fill_two_seats(self):
+        config = dict(CONFIG, judges=["hermes", "hermes", "claude"])
+        self.assertEqual(c.judges_for("codex", config), ["hermes", "claude"])
+
+    def test_remaining_judge_is_requested_and_findings_get_a_fix(self):
+        self.assertEqual(c.pr_labels(pr(), [PROOFREAD], "green", NOW, CONFIG, {"claude"}),
+                         {"needs:owner", "next:judge:hermes"})
+        self.assertEqual(c.pr_labels(pr(), [PROOFREAD, review("hermes")], "green", NOW, CONFIG, {"claude"}),
+                         {"needs:owner", "next:judge:hermes", "next:fix:codex"})
+
+    def test_owner_fills_only_one_missing_seat_on_the_current_head(self):
+        approved = [PROOFREAD, review("hermes", "APPROVED")]
+        owner = dict(review("owner", "APPROVED"), user={"login": c.OWNER_LOGIN})
+        self.assertEqual(c.pr_labels(pr(), approved, "green", NOW, CONFIG, {"claude"}), {"needs:owner"})
+        for checks, expected in (("green", {"next:merge:codex"}), ("red", {"next:fix:codex"}),
+                                 ("pending", set())):
+            self.assertEqual(c.pr_labels(pr(), approved + [owner], checks, NOW, CONFIG, {"claude"}), expected)
+        for invalid in (dict(owner, commit_id=OLD), dict(owner, user={"login": "stranger"}),
+                        dict(owner, state="DISMISSED")):
+            self.assertEqual(c.pr_labels(pr(), approved + [invalid], "green", NOW, CONFIG, {"claude"}),
+                             {"needs:owner"})
+        self.assertEqual(c.pr_labels(pr(), approved + [owner, dict(owner, state="CHANGES_REQUESTED")],
+                                     "green", NOW, CONFIG, {"claude"}), {"needs:owner", "next:fix:codex"})
+        self.assertEqual(c.pr_labels(pr(), approved + [owner], "green", NOW, CONFIG,
+                                     {"claude", "hermes"}), {"needs:owner"})
+        self.assertEqual(c.pr_labels(pr(), approved + [owner], "green", NOW, CONFIG,
+                                     {"claude", "owner"}), {"needs:owner"})
+        self.assertEqual(c.pr_labels(pr("owner"), [review("hermes", "APPROVED"), owner],
+                                     "green", NOW, CONFIG, {"codex", "claude"}), {"needs:owner"})
+
+    def test_shortfall_keeps_ci_fix_and_round_limit_behavior(self):
+        self.assertEqual(c.pr_labels(pr(), [PROOFREAD, review("hermes", "APPROVED")],
+                                     "red", NOW, CONFIG, {"claude"}), {"needs:owner", "next:fix:codex"})
+        rounds = [review("hermes", commit=x) for x in (OLD, OLD, HEAD)]
+        self.assertEqual(c.pr_labels(pr(), [PROOFREAD] + rounds, "green", NOW, CONFIG, {"claude"}),
+                         {"needs:owner"})
+
+    def test_owner_request_does_not_bypass_complexity_routing(self):
+        labels = {"needs:owner", "next:fix:codex", "next:judge:hermes"}
+        self.assertEqual(c.routed(labels, 5, 0, "major", "high"), labels | {"level:3", "risk:high"})
+        self.assertEqual(c.routed(labels, 5, 13, "major", "high"), {"needs:split"})
+
+    def test_reconcile_includes_closed_and_draft_ticket_implementations(self):
+        ticket = item(5, "factory:ready", "points:3")
+        current = pr(labels=[{"name": "next:merge:codex"}])
+        other = pr("claude", number=10, draft=True, state="closed")
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_prs=[current]), **{
+            "/pulls?state=all": [current, other],
+            "/pulls/9/reviews": [PROOFREAD, review("claude", "APPROVED"), review("hermes", "APPROVED")]}),
+            prs={9: current})
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertIn(("POST", "/issues/9/labels", {"labels": ["needs:owner"]}), gh.calls)
+        self.assertIn(("DELETE", "/issues/9/labels/next%3Amerge%3Acodex", None), gh.calls)
+        owner_comments = [b["body"] for m, path, b in gh.calls if path == "/issues/9/comments" and
+                          "factory needs you" in b["body"]]
+        self.assertTrue(owner_comments and "eligible" in owner_comments[0])
+
+    def test_another_tickets_implementation_does_not_exclude_a_judge(self):
+        history = [pr("claude", body="Closes #6", state="closed")]
+        self.assertEqual(c.ticket_implementers(history), {6: {"claude"}})
+        self.assertEqual(c.ticket_implementers([pr(body="No ticket")]), {})
+
+    def test_unavailable_ticket_history_fails_before_any_writes(self):
+        class Unavailable(FakeGitHub):
+            def all(self, path):
+                if path == "/pulls?state=all":
+                    raise RuntimeError("history unavailable")
+                return super().all(path)
+        gh = Unavailable(lists=lists(open_prs=[pr(labels=[])]))
+        with self.assertRaisesRegex(RuntimeError, "history unavailable"):
+            c.reconcile(gh, CONFIG, NOW)
+        self.assertEqual(gh.calls, [])
+
+    def test_ineligible_review_does_not_raise_the_escalation_floor(self):
+        earlier = review("claude", commit=OLD)
+        current = review("claude", commit=HEAD)
+        gh = FakeGitHub()
+        labels = c.route_pr(gh, pr(), [earlier, current], "green", set(), {"needs:owner"},
+                            3, CONFIG, {"claude"})
+        self.assertEqual(labels, {"needs:owner"})
+        state = stored([b["body"] for m, path, b in gh.calls if path == "/issues/9/comments"])
+        self.assertEqual(state["floor"], 0)
+
 
 class Ticket(unittest.TestCase):
     def test_implement_until_a_pr_exists(self):
@@ -164,6 +252,22 @@ class Routed(unittest.TestCase):
                 self.assertEqual(c.route_pr(replay, pr(), reviews, checks, {"complexity:underestimated"},
                                            {"next:fix:codex"}, 3, CONFIG, initial_floor=5), labels)
                 self.assertFalse(replay.calls)
+
+    def test_timeout_routing_combines_ticket_floor_and_judge_eligibility(self):
+        for reporter, expected_floor in (("claude", 5), ("hermes", 8)):
+            with self.subTest(reporter=reporter):
+                event = {"version": 1, "kind": "review", "head": HEAD,
+                         "level": None, "run_id": "a" * 32}
+                note = {"user": {"login": f"{reporter}-bot-rba[bot]"},
+                        "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+                gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+                labels = c.route_pr(gh, pr(), [], "pending", set(),
+                                    {"needs:owner", "next:judge:hermes"}, 3, CONFIG,
+                                    implemented_by={"codex", "claude"}, initial_floor=5)
+                state = stored([body["body"] for method, path, body in gh.calls
+                                if path == "/issues/9/comments"])
+                self.assertEqual(state["floor"], expected_floor)
+                self.assertEqual(labels, {"needs:owner", "next:judge:hermes"})
 
     def test_timeout_on_current_head_raises_floor_without_ci_or_review_failure(self):
         note = {"user": {"login": "codex-bot-rba[bot]"},
@@ -550,6 +654,30 @@ class Sync(unittest.TestCase):
         gh2 = FakeGitHub()
         c.sync_labels(gh2, 9, {"needs:owner"}, {"needs:owner"}, {"needs:owner"})
         self.assertEqual(gh2.calls, [])
+
+    def test_owner_review_request_has_a_specific_comment(self):
+        gh = FakeGitHub()
+        c.sync_labels(gh, 9, set(), {"needs:owner", "next:judge:hermes"},
+                      {"needs:owner", "next:judge:hermes"}, c.OWNER_REVIEW_COMMENT)
+        bodies = [b["body"] for m, path, b in gh.calls if path.endswith("/comments")]
+        self.assertIn("eligible", bodies[0])
+        self.assertNotIn("round limit", bodies[0])
+        self.assertIn("round limit", c.NEEDS_COMMENTS["needs:owner"])
+        self.assertNotIn("eligible", c.NEEDS_COMMENTS["needs:owner"])
+
+    def test_owner_comment_updates_once_when_the_cause_changes(self):
+        old = {"user": {"login": "github-actions[bot]"},
+               "body": f"@{c.OWNER_LOGIN} the factory needs you here: {c.OWNER_REVIEW_COMMENT}"}
+        gh = FakeGitHub(lists={"/issues/9/comments": [old]})
+        c.sync_labels(gh, 9, {"needs:owner"}, {"needs:owner"}, {"needs:owner"},
+                      c.NEEDS_COMMENTS["needs:owner"])
+        self.assertEqual(len(gh.calls), 1)
+        self.assertIn("round limit", gh.calls[0][2]["body"])
+        gh.lists["/issues/9/comments"].append(dict(old, body=gh.calls[0][2]["body"]))
+        gh.calls.clear()
+        c.sync_labels(gh, 9, {"needs:owner"}, {"needs:owner"}, {"needs:owner"},
+                      c.NEEDS_COMMENTS["needs:owner"])
+        self.assertEqual(gh.calls, [])
 
     def test_unknown_labels_are_created_first(self):
         gh = FakeGitHub()

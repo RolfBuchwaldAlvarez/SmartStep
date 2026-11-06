@@ -9,8 +9,11 @@ on the head, checks) and sets or removes labels so that they match:
           (implementer:<name> picks one of `implementers`, default the first;
           implementer:owner means the owner implements: no label)
   PR      by an agent or the owner; its judges are the first `judges_per_pr`
-          of `judges` other than its author (the owner's PRs get no proofread;
-          update, fix and merge are his, the conductor only asks the judges)
+          of `judges` other than its author or any implementer of the ticket
+          (the owner's PRs get no proofread; update, fix and merge are his)
+          too few eligible judges        -> needs:owner plus eligible judges;
+          exactly one seat missing       -> owner's head approval fills it,
+          unless he authored a ticket PR
           conflicts with its base        -> next:update:<author>
           no proofread yet (first hour)  -> next:proofread:<author>
           a judge's approval missing     -> next:judge:<judge>
@@ -75,6 +78,11 @@ MANAGED = ("next:", "needs:owner", "needs:points", "needs:split", "needs:estimat
            "risk:", "complexity:timeout:")
 LABEL_COLORS = {"next:": "1d76db", "needs:": "d93f0b", "step:acceptance": "0e8a16", "level:": "c5def5",
                 "risk:": "fbca04"}
+OWNER_REVIEW_COMMENT = (
+    "fewer than the required number of eligible judges remain after excluding ticket implementers. "
+    "Eligible judges and fix rounds continue. If exactly one seat is missing and you authored no PR for "
+    "this ticket, approve the current head to fill it; otherwise you must decide how to complete this PR."
+)
 NEEDS_COMMENTS = {
     "needs:owner": "a round limit was reached (a judge without approving, or planning poker with ticket findings "
                    "in every round), or planning poker found ticket findings on a ticket you drafted. The agents "
@@ -132,14 +140,37 @@ def implementer_for(labels: set[str], config: dict) -> str:
     return chosen[0] if len(chosen) == 1 else config["implementers"][0]
 
 
-def judges_for(author: str, config: dict) -> list[str]:
-    """Nobody judges their own PR; the first `judges_per_pr` of the others do."""
-    return [j for j in config["judges"] if j != author][:config["judges_per_pr"]]
+def judges_for(author: str, config: dict, implemented_by=()) -> list[str]:
+    """Distinct configured judges who authored no implementation PR for this ticket."""
+    excluded = set(implemented_by) | {author}
+    return [j for j in dict.fromkeys(config["judges"]) if j not in excluded][:config["judges_per_pr"]]
+
+
+def ticket_implementers(prs: list[dict]) -> dict[int, set[str]]:
+    """All recognized authors of ticket-linked PRs, including closed and draft attempts."""
+    result = {}
+    for pr in prs:
+        ticket, author = linked_ticket(pr), author_of(pr["user"]["login"])
+        if ticket is not None and author is not None:
+            result.setdefault(ticket, set()).add(author)
+    return result
 
 
 def is_real(review: dict) -> bool:
     """Thread replies show up as empty COMMENTED reviews; they are not judgements."""
     return review.get("state") != "COMMENTED" or bool((review.get("body") or "").strip())
+
+
+def approved_head(reviews: list[dict], head: str) -> bool:
+    deciding = [r for r in reviews if r.get("state") in DECIDING]
+    return bool(deciding) and deciding[-1]["state"] == "APPROVED" and deciding[-1].get("commit_id") == head
+
+
+def round_limit_reached(reviews: list[dict], config: dict) -> bool:
+    deciding = [r for r in reviews if r.get("state") in DECIDING]
+    approved_last = bool(deciding) and deciding[-1]["state"] == "APPROVED" \
+        and deciding[-1].get("commit_id") == reviews[-1].get("commit_id")
+    return len(reviews) >= config["max_rounds"] and not approved_last
 
 
 def linked_ticket(pr: dict) -> int | None:
@@ -236,7 +267,7 @@ def estimate_labels(labels: set[str], estimates: dict, findings: dict | None = N
 def routed(labels: set[str], points: int | None, floor: int, severity: str, risk: str) -> set[str]:
     """Add complexity routing to a PR's labels from pr_labels. Pure."""
     labels = set(labels)
-    if "needs:owner" in labels:                            # the pipeline's stop comes first
+    if labels == {"needs:owner"}:                           # a pause or only the owner approval remains
         return labels
     if points is not None and (points >= routing.SPLIT_AT or floor >= routing.SPLIT_AT):
         return {"needs:split"}
@@ -247,7 +278,7 @@ def routed(labels: set[str], points: int | None, floor: int, severity: str, risk
     return labels
 
 
-def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: dict) -> set[str]:
+def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: dict, implemented_by=()) -> set[str]:
     """The labels a factory PR should carry right now. Pure."""
     author = author_of(pr["user"]["login"])
     if author is None or pr.get("draft"):
@@ -261,31 +292,34 @@ def pr_labels(pr: dict, reviews: list[dict], checks: str, now: float, config: di
     opened = datetime.strptime(pr["created_at"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc).timestamp()
     if not by_owner and not proofread and now - opened <= PROOFREAD_WAIT:
         return {f"next:proofread:{author}"}
-    judges = judges_for(author, config)
+    judges = judges_for(author, config, implemented_by)
+    missing = config["judges_per_pr"] - len(judges)
+    owner_reviews = [r for r in reviews if author_of(r["user"]["login"]) == "owner"]
+    owner_can_fill = missing == 1 and not by_owner and "owner" not in implemented_by
+    owner_approved = owner_can_fill and approved_head(owner_reviews, head)
+    labels = {"needs:owner"} if missing and not owner_approved else set()
     open_judges, present = [], []
     for judge in judges:
         theirs = [r for r in reviews if agent_of(r["user"]["login"]) == judge]
-        deciding = [r for r in theirs if r.get("state") in DECIDING]
-        reviewed = [r.get("commit_id") for r in theirs]
-        approved_head = bool(deciding) and deciding[-1]["state"] == "APPROVED" and deciding[-1].get("commit_id") == head
-        approved_last = bool(deciding) and bool(reviewed) and deciding[-1]["state"] == "APPROVED" \
-            and deciding[-1].get("commit_id") == reviewed[-1]
-        if len(theirs) >= config["max_rounds"] and not approved_last:
+        if round_limit_reached(theirs, config):
             return {"needs:owner"}
         if any(r.get("commit_id") == head for r in theirs):
             present.append(judge)
-        if not approved_head:
+        if not approved_head(theirs, head):
             open_judges.append(judge)
-    labels = {f"next:judge:{j}" for j in open_judges}
+    labels.update(f"next:judge:{j}" for j in open_judges)
     if by_owner:                                           # fixing and merging are his
         return labels
     if not open_judges:
-        if checks == "green":
+        if checks == "green" and (not missing or owner_approved):
             return {f"next:merge:{author}"}
-        if checks == "red":
-            return {f"next:fix:{author}"}
-        return set()                                       # checks still running
-    if len(present) == len(judges):                        # a fix round waits for both judgements
+        owner_findings = owner_can_fill and bool(owner_reviews) and not owner_approved \
+            and owner_reviews[-1].get("commit_id") == head \
+            and owner_reviews[-1].get("state") in ("COMMENTED", "CHANGES_REQUESTED")
+        if judges and (checks == "red" or owner_findings):
+            labels.add(f"next:fix:{author}")
+        return labels
+    if len(present) == len(judges):                        # wait for every eligible judge's judgement
         labels.add(f"next:fix:{author}")
     return labels
 
@@ -322,7 +356,8 @@ class GitHub:
             page += 1
 
 
-def sync_labels(gh, number: int, current: set[str], desired: set[str], known: set[str]) -> None:
+def sync_labels(gh, number: int, current: set[str], desired: set[str], known: set[str],
+                owner_comment: str | None = None) -> None:
     """Make the conductor's labels on an issue or PR match `desired`; leave all others alone."""
     for name in sorted(desired - current):
         if name not in known:
@@ -335,9 +370,19 @@ def sync_labels(gh, number: int, current: set[str], desired: set[str], known: se
             known.add(name)
         gh.call("POST", f"/issues/{number}/labels", {"labels": [name]})
         if name in NEEDS_COMMENTS:
+            text = owner_comment if name == "needs:owner" and owner_comment else NEEDS_COMMENTS[name]
             gh.call("POST", f"/issues/{number}/comments",
-                    {"body": f"@{OWNER_LOGIN} the factory needs you here: {NEEDS_COMMENTS[name]}"})
+                    {"body": f"@{OWNER_LOGIN} the factory needs you here: {text}"})
         print(f"conductor: #{number} + {name}")
+    if owner_comment and "needs:owner" in current & desired:
+        # The shortage can become a round-limit pause without changing the label.
+        prefix = f"@{OWNER_LOGIN} the factory needs you here: "
+        notices = [c.get("body", "") for c in gh.all(f"/issues/{number}/comments")
+                   if c.get("user", {}).get("login") == "github-actions[bot]"
+                   and c.get("body", "").startswith(prefix)]
+        body = prefix + owner_comment
+        if not notices or notices[-1] != body:
+            gh.call("POST", f"/issues/{number}/comments", {"body": body})
     # Releasing a timeout wakeup is the acknowledgment: obsolete task/level
     # labels must already be gone before a poller can run again.
     for name in sorted(current - desired, key=lambda name: (name.startswith("complexity:timeout:"), name)):
@@ -347,14 +392,15 @@ def sync_labels(gh, number: int, current: set[str], desired: set[str], known: se
 
 
 def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], desired: set[str],
-             points: int | None, config: dict, initial_floor: int = 0) -> set[str]:
+             points: int | None, config: dict, implemented_by=(), initial_floor: int = 0) -> set[str]:
     """Complexity routing for one PR: findings' severity, risk, escalation floor (state comment)."""
     number, head = pr["number"], pr["head"]["sha"]
     author = author_of(pr["user"]["login"])
     if author == "owner":
         points = None                                      # his PRs: no levels, no split, no state comment
     real = [r for r in reviews if is_real(r)]
-    by_judge = {j: [r for r in real if agent_of(r["user"]["login"]) == j] for j in judges_for(author, config)}
+    judges = judges_for(author, config, implemented_by)
+    by_judge = {j: [r for r in real if agent_of(r["user"]["login"]) == j] for j in judges}
     floor, severity = 0, "major"
     if points is not None:
         comments = gh.all(f"/issues/{number}/comments")
@@ -469,6 +515,8 @@ def sync_ticket_metrics(gh, ready: list[dict], now: float, config: dict) -> None
 def reconcile(gh, config: dict, now: float) -> None:
     known = {l["name"] for l in gh.all("/labels")}
     prs = gh.all("/pulls?state=open")
+    # Read the complete history before writing labels: an unavailable history must not grant eligibility.
+    implemented = ticket_implementers(gh.all("/pulls?state=all")) if any(linked_ticket(p) for p in prs) else {}
     by_ticket = {}
     for pr in prs:
         ticket = linked_ticket(pr)
@@ -512,7 +560,7 @@ def reconcile(gh, config: dict, now: float) -> None:
     ready = [i for i in gh.all("/issues?state=all&labels=factory:ready") if not i.get("pull_request")]
     tickets = {i["number"] for i in ready}
     ticket_points = {i["number"]: routing.points_of({l["name"] for l in i["labels"]}) for i in ready}
-    ticket_implementers = {i["number"]: implementer_for({l["name"] for l in i["labels"]}, config) for i in ready}
+    assigned_implementers = {i["number"]: implementer_for({l["name"] for l in i["labels"]}, config) for i in ready}
     for issue in ready:
         if issue["number"] in by_ticket:
             floor_for(issue)                              # closed history without an active PR needs no fetch
@@ -526,12 +574,18 @@ def reconcile(gh, config: dict, now: float) -> None:
         reviews = gh.all(f"/pulls/{pr['number']}/reviews")
         checks = checks_state(gh.all(f"/commits/{pr['head']['sha']}/check-runs"), config["required_checks"])
         current = {l["name"] for l in pr["labels"]}
-        desired = pr_labels(full, reviews, checks, now, config)
+        excluded = implemented.get(ticket, set())
+        desired = pr_labels(full, reviews, checks, now, config, excluded)
         if not full.get("draft"):                          # also with nothing due, to record a fix round's head
             desired = route_pr(gh, full, reviews, checks, current, desired, ticket_points.get(ticket), config,
-                               ticket_floors.get(ticket, 0)
-                               if author_of(full["user"]["login"]) == ticket_implementers.get(ticket) else 0)
-        sync_labels(gh, pr["number"], current, desired, known)
+                               implemented_by=excluded, initial_floor=ticket_floors.get(ticket, 0)
+                               if author_of(full["user"]["login"]) == assigned_implementers.get(ticket) else 0)
+        judges = judges_for(author_of(pr["user"]["login"]), config, excluded)
+        at_limit = any(round_limit_reached([r for r in reviews if is_real(r)
+                                           and agent_of(r["user"]["login"]) == j], config) for j in judges)
+        owner_comment = (OWNER_REVIEW_COMMENT if len(judges) < config["judges_per_pr"] and not at_limit
+                         else NEEDS_COMMENTS["needs:owner"])
+        sync_labels(gh, pr["number"], current, desired, known, owner_comment)
         handled.add(pr["number"])
     for item in gh.all("/issues?state=open"):            # no longer a factory item: clear our labels
         current = {l["name"] for l in item["labels"]}
