@@ -203,7 +203,7 @@ def estimate_of(body: str) -> int | None:
 
 FINDINGS = re.compile(r"^[\s*_]*Ticket findings:[\s*_]*", re.IGNORECASE | re.MULTILINE)
 FINDING_CATEGORIES = ("UNTESTABLE_CRITERION", "SCOPE_TOO_BROAD", "MISSING_DEPENDENCY", "CONTRADICTS_SPEC", "UNCLEAR")
-FINDING = re.compile(r"^[\s*_\-+\d.)]*`?(" + "|".join(FINDING_CATEGORIES) + r")`?[\s*_]*[:\u2013\u2014-]?\s*(\S.*)$")
+FINDING = re.compile(r"^[\s*_\-+\d.)]*`?(" + "|".join(FINDING_CATEGORIES) + r")\b`?[\s*_]*[:\u2013\u2014-]?\s*(\S.*)$")
 REVISED = re.compile(r"^[\s*_]*Revised:", re.IGNORECASE)
 
 

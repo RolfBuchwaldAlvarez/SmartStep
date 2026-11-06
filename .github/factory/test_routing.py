@@ -115,6 +115,11 @@ class PlanningPoker(unittest.TestCase):
         # A quoted part is not one's own.
         self.assertIsNone(r.findings_of("Estimate: 5 – x\n> Ticket findings: none"))
 
+    def test_a_longer_word_is_not_a_finding_category(self):
+        body = ("Estimate: 5 – x\nTicket findings:\n- UNCLEARED: the criterion is vague\n"
+                "- CONTRADICTS_SPECIFICATION: quoted\n- `UNCLEAR_X`: y\n- `UNCLEAR`: 'sync' means push or pull")
+        self.assertEqual(r.findings_of(body), [("UNCLEAR", "'sync' means push or pull")])
+
     def test_revised_comments(self):
         self.assertTrue(r.revised("Revised: 1. fixed in the body"))
         self.assertTrue(r.revised("**Revised:** all three"))
