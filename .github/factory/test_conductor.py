@@ -441,6 +441,17 @@ class TicketCheck(unittest.TestCase):
         comments = [vote("codex", FINDING), vote("claude", CLEAN), vote("owner", "Revised: clarified")]
         self.assertEqual(c.poker_round(comments, ["codex", "claude"], "owner")[2], 1)
 
+    def test_unknown_drafter_with_findings_goes_to_the_owner(self):
+        estimates, findings, rounds = c.poker_round([vote("codex", FINDING), vote("claude", CLEAN)],
+                                                    ["codex", "claude"], None)
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, None),
+                         ({"needs:owner"}, None))
+
+    def test_one_estimator_left_after_the_drafter_goes_to_the_owner(self):
+        estimators = c.estimators_for("claude", {"estimators": ["codex", "claude"]})
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {a: None for a in estimators}),
+                         ({"needs:estimate"}, None))
+
     def test_reconcile_asks_the_drafter_to_revise(self):
         ticket = item(5, "factory:estimate", user={"login": "claude-bot-rba[bot]"})
         gh = FakeGitHub(lists=dict(lists(open_all=[ticket]), **{
