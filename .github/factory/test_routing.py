@@ -103,6 +103,24 @@ class State(unittest.TestCase):
 
 
 class PlanningPoker(unittest.TestCase):
+    def test_ticket_findings(self):
+        self.assertIsNone(r.findings_of("Estimate: 5 – three layers"))           # the part is missing
+        self.assertEqual(r.findings_of("Estimate: 5 – x\n**Ticket findings:** none"), [])
+        body = ("Estimate: 5 – x\nTicket findings:\n- `UNCLEAR`: 'sync' means push or pull\n"
+                "2. **SCOPE_TOO_BROAD** – split the widget\n- UNCLEAR\n- MISSING_DEPENDENCY:\n- a remark")
+        self.assertEqual(r.findings_of(body), [("UNCLEAR", "'sync' means push or pull"),
+                                               ("SCOPE_TOO_BROAD", "split the widget")])
+        # Findings without a detail do not count.
+        self.assertEqual(r.findings_of("Estimate: 5 – x\nTicket findings:\n- UNCLEAR"), [])
+        # A quoted part is not one's own.
+        self.assertIsNone(r.findings_of("Estimate: 5 – x\n> Ticket findings: none"))
+
+    def test_revised_comments(self):
+        self.assertTrue(r.revised("Revised: 1. fixed in the body"))
+        self.assertTrue(r.revised("**Revised:** all three"))
+        self.assertFalse(r.revised("> Revised: quoted"))
+        self.assertFalse(r.revised("I revised the ticket"))
+
     def test_estimate_comments(self):
         self.assertEqual(r.estimate_of("Estimate: 5 – three layers"), 5)
         self.assertEqual(r.estimate_of("**Estimate:** 8 – cross-cutting"), 8)   # bold is fine

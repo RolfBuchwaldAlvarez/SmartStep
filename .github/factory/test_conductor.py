@@ -54,7 +54,7 @@ class Config(unittest.TestCase):
     def test_factory_yml(self):
         self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
                                   "judges_per_pr": 2, "max_rounds": 3, "required_checks": ["android-ci"],
-                                  "estimators": ["codex", "claude"], "timeout_signals": True})
+                                  "estimators": ["codex", "claude", "hermes"], "timeout_signals": True})
 
     def test_former_single_implementer_key(self):
         path = HERE / "_legacy.yml"
@@ -141,8 +141,8 @@ class Poker(unittest.TestCase):
 
     def test_reconcile_sets_the_points_and_asks_the_owner(self):
         ticket = item(5, "factory:estimate")
-        comments = [{"user": {"login": "codex-bot-rba[bot]"}, "body": "Estimate: 3 – two layers, known pattern"},
-                    {"user": {"login": "claude-bot-rba[bot]"}, "body": "Estimate: 5 – three layers and a Room table"}]
+        comments = [vote("codex", "Estimate: 3 – two layers, known pattern\nTicket findings: none"),
+                    vote("claude", "Estimate: 5 – three layers and a Room table\n\nTicket findings: none")]
         gh = FakeGitHub(lists=dict(lists(open_all=[ticket]), **{
             "/issues?state=open&labels=factory:estimate": [ticket], "/issues/5/comments": comments}))
         c.reconcile(gh, CONFIG, NOW)
@@ -373,6 +373,82 @@ class FakeGitHub:
 
     def all(self, path):
         return self.lists.get(path, [])
+
+
+def vote(agent, body):
+    login = "RolfBuchwaldAlvarez" if agent == "owner" else f"{agent}-bot-rba[bot]"
+    return {"user": {"login": login}, "body": body}
+
+
+FINDING = "Estimate: 3 – two layers\nTicket findings:\n- UNTESTABLE_CRITERION: 'works well' has no check"
+CLEAN = "Estimate: 3 – two layers\nTicket findings: none"
+
+
+class TicketCheck(unittest.TestCase):
+    def test_estimators_skip_the_drafter(self):
+        config = {"estimators": ["codex", "claude", "hermes"]}
+        self.assertEqual(c.estimators_for("claude", config), ["codex", "hermes"])
+        self.assertEqual(c.estimators_for("owner", config), ["codex", "claude"])
+        self.assertEqual(c.estimators_for(None, config), ["codex", "claude"])
+
+    def test_a_vote_needs_both_parts(self):
+        estimates, findings, rounds = c.poker_round(
+            [vote("codex", "Estimate: 3 – two layers"), vote("hermes", CLEAN)], ["codex", "hermes"], "claude")
+        self.assertEqual((estimates, rounds), ({"codex": None, "hermes": 3}, 0))
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"next:estimate:codex"}, None))
+
+    def test_findings_send_the_ticket_to_its_drafter(self):
+        estimates, findings, rounds = c.poker_round([vote("codex", FINDING), vote("hermes", CLEAN)],
+                                                    ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"next:revise:claude"}, None))
+
+    def test_findings_come_before_a_size_disagreement(self):
+        far = "Estimate: 13 – a sync layer\nTicket findings:\n- SCOPE_TOO_BROAD: split sync from the UI"
+        estimates, findings, rounds = c.poker_round([vote("codex", far), vote("hermes", "Estimate: 2 – one field\n"
+                                                    "Ticket findings: none")], ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"next:revise:claude"}, None))
+
+    def test_revised_starts_a_new_round(self):
+        comments = [vote("codex", FINDING), vote("hermes", CLEAN), vote("claude", "Revised: 1. fixed, criterion now 'p95 < 200 ms'")]
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+        self.assertEqual((estimates, rounds), ({"codex": None, "hermes": None}, 1))
+        comments += [vote("codex", CLEAN), vote("hermes", CLEAN)]
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"), (set(), 3))
+
+    def test_revised_by_someone_else_does_not_count(self):
+        comments = [vote("codex", FINDING), vote("hermes", CLEAN), vote("codex", "Revised: no")]
+        self.assertEqual(c.poker_round(comments, ["codex", "hermes"], "claude")[2], 0)
+
+    def test_a_returning_finding_counts_again_up_to_the_round_limit(self):
+        comments = []
+        for round_ in range(3):
+            comments += [vote("codex", FINDING), vote("hermes", CLEAN)]
+            estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+            expected = {"needs:owner"} if round_ == 2 else {"next:revise:claude"}
+            self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                             (expected, None), round_)
+            comments.append(vote("claude", "Revised: rejected, the criterion is measurable"))
+
+    def test_owner_drafted_ticket_with_findings_goes_to_the_owner(self):
+        estimates, findings, rounds = c.poker_round([vote("codex", FINDING), vote("claude", CLEAN)],
+                                                    ["codex", "claude"], "owner")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "owner"),
+                         ({"needs:owner"}, None))
+        comments = [vote("codex", FINDING), vote("claude", CLEAN), vote("owner", "Revised: clarified")]
+        self.assertEqual(c.poker_round(comments, ["codex", "claude"], "owner")[2], 1)
+
+    def test_reconcile_asks_the_drafter_to_revise(self):
+        ticket = item(5, "factory:estimate", user={"login": "claude-bot-rba[bot]"})
+        gh = FakeGitHub(lists=dict(lists(open_all=[ticket]), **{
+            "/issues?state=open&labels=factory:estimate": [ticket],
+            "/issues/5/comments": [vote("codex", FINDING), vote("hermes", CLEAN)]}))
+        c.reconcile(gh, dict(CONFIG, estimators=["codex", "claude", "hermes"]), NOW)
+        self.assertIn(("POST", "/issues/5/labels", {"labels": ["next:revise:claude"]}), gh.calls)
+        self.assertFalse(any("points:" in str(b) for m, p, b in gh.calls))
 
 
 def item(number, *labels, **extra):
