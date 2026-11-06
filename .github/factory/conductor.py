@@ -30,7 +30,7 @@ ticket's author); each posts "Estimate: <n> – reason" plus a "Ticket findings:
 (`none` or findings) without reading the others'. Findings from either: no points,
 next:revise:<drafter>; the drafter answers with a "Revised:" comment, which starts a
 new round (after max_rounds rounds with findings, or for a ticket the owner drafted:
-needs:owner). No findings, at most one Fibonacci step apart: the conductor sets
+needs:owner; the owner's "Revised:" starts a new round on any ticket). No findings, at most one Fibonacci step apart: the conductor sets
 points:<higher> and asks the owner to approve; further apart: needs:estimate.
 
 Complexity routing (routing.py, olympus-agents docs/complexity-routing.md):
@@ -195,12 +195,13 @@ def estimators_for(drafter: str | None, config: dict) -> list[str]:
 
 def poker_round(comments: list[dict], estimators: list[str], drafter: str | None) -> tuple[dict, dict, int]:
     """The current poker round from a ticket's comments, oldest first: (estimates, findings, earlier rounds).
-    Each `Revised:` comment by the drafter ends a round; only votes after the last one count. A vote is a
-    comment with both an `Estimate:` line and a `Ticket findings:` part; an agent's later vote replaces its
-    earlier one. Pure."""
+    Each `Revised:` comment by the drafter or the owner ends a round; only votes after the last one count. A
+    vote is a comment with both an `Estimate:` line and a `Ticket findings:` part; an agent's later vote
+    replaces its earlier one. Pure."""
     rounds, start = 0, 0
     for index, comment in enumerate(comments):
-        if drafter and author_of(comment["user"]["login"]) == drafter and routing.revised(comment.get("body")):
+        author = author_of(comment["user"]["login"])
+        if author and author in (drafter, "owner") and routing.revised(comment.get("body")):
             rounds, start = rounds + 1, index + 1
     estimates, findings = {agent: None for agent in estimators}, {agent: [] for agent in estimators}
     for comment in comments[start:]:

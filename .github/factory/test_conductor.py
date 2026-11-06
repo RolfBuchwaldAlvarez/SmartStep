@@ -423,6 +423,39 @@ class TicketCheck(unittest.TestCase):
         comments = [vote("codex", FINDING), vote("hermes", CLEAN), vote("codex", "Revised: no")]
         self.assertEqual(c.poker_round(comments, ["codex", "hermes"], "claude")[2], 0)
 
+    def test_revised_by_a_stranger_does_not_count_on_an_unknown_drafters_ticket(self):
+        comments = [vote("codex", FINDING), vote("claude", CLEAN),
+                    {"user": {"login": "someone"}, "body": "Revised: no"}]
+        self.assertEqual(c.poker_round(comments, ["codex", "claude"], None)[2], 0)
+
+    def test_owner_restart_after_the_round_limit(self):
+        comments = []
+        for _ in range(3):
+            comments += [vote("codex", FINDING), vote("hermes", CLEAN)]
+            comments.append(vote("claude", "Revised: rejected, the criterion is measurable"))
+        comments = comments[:-1]                           # the third round ended in needs:owner
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"needs:owner"}, None))
+        comments.append(vote("owner", "Revised: narrowed the scope"))
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+        self.assertEqual(estimates, {"codex": None, "hermes": None})
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"next:estimate:codex", "next:estimate:hermes"}, None))
+        # Clean votes give points; findings go back to the owner, the limit stays reached.
+        clean = comments + [vote("codex", CLEAN), vote("hermes", CLEAN)]
+        estimates, findings, rounds = c.poker_round(clean, ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"), (set(), 3))
+        again = comments + [vote("codex", FINDING), vote("hermes", CLEAN)]
+        estimates, findings, rounds = c.poker_round(again, ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"needs:owner"}, None))
+
+    def test_owner_restart_on_an_unknown_drafters_ticket(self):
+        comments = [vote("codex", FINDING), vote("claude", CLEAN), vote("owner", "Revised: clarified")]
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "claude"], None)
+        self.assertEqual((estimates, rounds), ({"codex": None, "claude": None}, 1))
+
     def test_a_returning_finding_counts_again_up_to_the_round_limit(self):
         comments = []
         for round_ in range(3):
