@@ -1,0 +1,683 @@
+PAGE 1
+    Smart Step Milestone #1 Requirements
+
+
+     This document describes the requirements for the first development milestone (Milestone #1)
+      of the Smart Step application.
+
+     Milestone #1 is focused on establishing the basic structure of the app and creating the initial
+     user experience. At this stage, the foundation for the interface, navigation, and state
+    management is laid, which will be gradually expanded in the following milestones.
+
+     The mockups define the overall appearance and expected behavior of the interface. Specific
+      technical decisions (component structure, state handling, animation implementation) are left to
+     the participants, as long as the final result follows the described logic and interaction patterns.
+
+     You can find the Smart Step mockups here:
+
+
+        https://www.figma.com/design/aTiGCCavPLtgZNGXcV23H6/Smart-
+         Step?node-id=0-1
+
+
+
+    Milestone #1 Goal
+
+       Implement the initial app launch flow with a Splash Screen
+
+        Create the Profile Setup Screen for collecting basic user information
+
+        Prepare the UI and navigation foundation for future activity tracking feature
+
+
+     Icons
+
+     You may use Material Design icons where appropriate. If a suitable Material icon is not available,
+     use the custom icons provided in the Figma mockups.
+
+      In Figma, any icon or image can be exported by selecting the element and clicking
+
+
+
+   Adaptive Layouts
+
+     The app must support two breakpoints:
+
+      Up to 840 dp ™ mobile layout.
+       From 840 dp and above ™ wide-screen layout.
+
+
+
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 2
+              Technical Requirements
+
+  • Splash Screen
+
+       Background: solid light blue color, without gradients.
+         Center: a minimal walking person icon (app logo)
+
+
+  d My Profile Screen (First Launch)
+
+     This screen is used to collect the userˇs basic physiological parameters required for accurate
+      activity calculations (steps, distance, calories, etc.).
+
+     The screen is shown only once  on the very first app launch.
+
+      After the user completes or skips this step, the data is saved locally and the screen must not
+
+
+
+    Screen Display Conditions
+
+      The screen appears immediately after the Splash Screen
+       on the first app launch.
+              If the user has already completed or skipped this screen
+          (profile data exists), it is automatically skipped.
+          Profile data must be stored locally (DataStore /
+        SharedPreferences or equivalent)
+
+
+    Top Bar
+
+       Center — title: My Profile
+         Top-right corner — Skip button
+
+     Skip button behavior:
+
+        Allows the user to skip profile setup.
+         Default profile values are applied.
+       The user proceeds to the next step of the app flow.
+       The My Profile screen must not be shown again automatically
+
+
+      Subtitle
+
+     Below the title, display the following static text: This information helps calculate your activity
+     more accurately.
+
+
+
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 3
+     Profile Fields
+
+     The screen contains three vertically stacked fields, grouped inside a single container.
+
+       Gender
+        Type: Dropdown selector
+         Default value: Female
+         Available options:
+          Male
+          Female
+
+    Dropdown behavior:
+
+        Tapping the field opens a dropdown menu anchored to the field.
+       The dropdown displays all available gender options in a vertical list.
+       The currently selected value is visually highlighted and marked with a check icon.
+         Selecting an option immediately updates the field value and closes the dropdown.
+       The selected value is used for further activity calculations.
+
+
+      2. Height
+
+        Tapping the field opens the Height Picker Dialog.
+       The field displays the currently selected value with the appropriate unit.
+         Default value: 170 cm
+
+
+      3. Weight
+
+        Tapping the field opens the Weight Picker Dialog.
+       The field displays the currently selected value with the appropriate unit.
+         Default value: 60 kg
+
+
+    Primary Action Button
+
+       Positioned at the bottom of the screen
+        Button text: Start
+
+      Start button behavior:
+
+       Saves all selected profile values.
+       Marks the onboarding step as completed.
+        Navigates the user to the next screen of the app.
+       The My Profile screen must not be shown again on future app launches
+
+
+
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 4
+    General Behavior Notes
+
+       UI state should be preserved across configuration changes.
+                  If a picker dialog or dropdown was open before the configuration change, it should
+           remain open after recreation.
+            Previously selected values must not be reset.
+          Profile data must be accessible for future activity calculations
+
+
+    Height Picker Dialog
+
+     This dialog is used to select the userˇs height value, which is required for distance calculation
+     and other activity metrics.
+
+     The dialog opens when the user taps the
+
+     Dialog Structure
+
+       Modal dialog displayed above the current screen
+       The background behind the dialog is dimmed
+       The dialog must not be dismissible by tapping outside of
+           its bounds
+
+     Header
+
+           Title: Height
+          Subtitle: Used to calculate distance
+
+      Unit Selector
+
+         Unit switcher with two options: cm, ft/in
+       The active unit is visually highlighted and marked with a check indicator
+        Switching units must not reset the actual height value
+        Only the representation format changes
+
+     Height Selection  cm
+
+         Displays a single vertical scrollable column of numeric values
+       The selection indicator (highlighted center area) remains fixed
+        Only the list of numbers scrolls vertically
+       The value aligned with the selection indicator is considered selected
+        Height is changed by  scrolling
+
+
+
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 5
+      The selection indicator remains fixed for both columns
+        Only the numeric values inside each column scroll
+       The final height value is determined by the combination of ft + in
+
+     Default value (must match 175 cm): 5 ft 9 in
+
+     Conversion Rules
+
+        Height values must be converted consistently between cm and ft/in
+       The exact conversion formulas and examples can be found in the following references:
+          Convert centimeters to feet and inches
+           Convert feet and inches to centimeters
+       Close values (e.g. 174 cm and 175 cm) may result in the same ft/in representation
+        Minor rounding differences (±1 inch) are acceptable
+
+     Action Buttons
+
+        Cancel:
+           Closes the dialog
+           Discards all changes made inside the dialog
+        Ok:
+           Confirms the selected value
+           Closes the dialog
+          Updates the Height field on the My Profile screen
+
+     State Handling
+
+       The currently selected values must not be reset after configuration changes
+              If the dialog was open before a configuration change, it must remain open afterwar
+
+
+    Weight Picker Dialog
+
+     This dialog is used to select the userˇs weight value, which is required for calorie calculation.
+
+     The dialog opens when the user taps the Weight field on the My Profile screen.
+
+     Header
+
+           Title: Weight
+          Subtitle: Used to calculate calories
+
+      Unit Selector
+
+       Measurement units: kg, lbs
+
+     Default Values
+
+         kg: 65
+          lbs: 143 (Values must match after conversion)
+
+     Weight Selection
+
+      A single vertical scrollable column with whole numeric values
+         Interaction and behavior are
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 6
+     Conversion Rules
+
+        Conversion between kg and lbs is performed using the following formulas:
+            lbs = kg × 2.20462
+          kg = lbs ÷ 2.20462
+        Values are rounded to the nearest whole number
+        Minor rounding differences are acceptable
+
+
+    Measurement System Synchronization
+
+       Height and Weight pickers share the same measurement system.
+      When the user switches units in one picker (e.g. from cm to ft/in or from kg to lbs), the other
+         picker must automatically switch to the corresponding unit system.
+         Existing values must be recalculated to the new units so that height and weight remain
+          logically consistent.
+         Unit switching affects only the representation; the actual physical values must stay
+         equivalent after conversion
+
+
+    Wide Screen Layout (840dp+)
+
+    On screens with a width of 840dp and above, the overall structure of the My Profile screen
+     remains the same as in the mobile layout.
+
+     The layout must not appear as a stretched version of the mobile UI.
+
+     Main Content
+
+       The profile content block is centered horizontally on
+        the screen.
+       The content block (subtitle + Gender / Height / Weight
+          fields) has a fixed width of 394dp.
+
+     Primary Action Button (Start)
+
+      On wide screens, the Start button must not stretch
+        across the entire screen width.
+       The button width matches the content width (394dp).
+
+     Dialog Behavior
+
+      The Height Picker and Weight Picker dialogs do not receive separate wide -screen
+         adaptations.
+         Dialog size and appearance remain the same as in the mobile layout.
+        Dialogs are displayed centered on the screen over a dimmed background
+
+
+
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 7
+  à Main Screen (Home)
+
+     The Main Screen is the primary screen of the application, where the user can see their current
+      daily activity progress.
+
+     The screen is focused on displaying the step count and progress toward the daily goal.
+
+
+    Top Bar
+
+     A menu (hamburger) icon is placed on the left.
+       The app name Smart Step is displayed in the center.
+        Tapping the menu icon opens the Navigation Drawer
+
+
+    Step Counter Card
+
+     A large numeric value displaying the number of steps taken
+         today.
+       Below the number, the daily goal is shown in the format:
+          /6000 Steps
+
+     Progress Indicator
+
+      A horizontal progress bar is displayed below the goal text.
+       The progress bar represents the ratio of the current step
+        count to the daily goal.
+       The progress bar fill updates according to the step count
+        value
+
+     Decorative Element
+
+      A decorative icon (e.g. a sneaker icon) is displayed in the upper area of the card.
+       The icon has no functional behavior and does not respond to user interaction.
+       The element is used purely as a visual accent.
+
+     Behavior
+
+       The step count value and progress bar update according to the latest available data.
+        At this stage, the screen does not include any additional metrics or control elements.
+
+
+      Permission Flow (Bottom Sheets)
+
+     Overall Flow
+
+     On the first app launch, after completing (or skipping) the Profile Setup Screen, the user is
+        navigated to the Main Screen (Home).
+        Immediately after the Main Screen is shown for the first time, the app requests Physical
+          Activity / Motion Sensors permission via a system dialog
+
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 8
+           If the permission is denied, explanatory Bottom Sheets are shown according to the user’s
+         actions.
+
+     Without this permission, step counting is not possible
+
+
+    Requested Permissions
+
+       Physical Activity / Motion Sensors — required.
+       Background activity access — optional, but recommended
+
+
+    General Rules
+
+          All permissions are requested via system dialogs.
+       Bottom Sheets are used only to explain the consequences and guide the user.
+       Bottom Sheets do not replace or imitate system permission dialogs.
+       Bottom Sheet 1 and Bottom Sheet 2 must not be dismissible until the required permission is
+        addressed
+
+
+    Bottom Sheet 1   After First Denial
+
+      Shown after the user denies the physical activity
+        permission for the first time.
+         Explains that step counting requires access to motion
+         sensors.
+        Primary action: Allow access
+        Tapping the button opens the system permission dialog
+         again.
+              If denied again, Bottom Sheet 2 is shown
+
+
+    Bottom Sheet 2   Manual Permission
+
+      Shown after the user denies the permission twice.
+         Explains that the permission must now be enabled
+        manually via system settings.
+        Primary action: Open settings
+       Opens the system settings screen.
+              If the permission is not granted manually:
+           step counting does not work,
+             this Bottom Sheet is shown again on every app launch
+
+
+
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 9
+    Bottom Sheet 3   Background Access
+
+     This Bottom Sheet is shown after the user has granted the physical activity permission.
+
+     The purpose of this step is to explain that allowing the app to run in the background helps
+     Smart Step perform background tasks more reliably when the app is not open.
+
+     This permission controls whether the app is allowed to continue background execution. Since
+     Android may restrict background activity to save battery, granting this permission reduces such
+      limitations and improves continuity of step tracking and updates.
+
+     User Action
+
+     Tapping Continue opens the standard Android system dialog
+      for allowing background execution.
+
+              If the user grants the permission:
+          background step tracking works more reliably.
+              If the user denies the permission:
+           the app continues to work,
+          background activity may be limited by the system.
+
+
+
+         Implementation Note
+
+       When Continue is tapped, the app should trigger the following system intent:
+
+        ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+
+         This intent opens the system dialog that allows the user to permit the app to run in
+         the background with fewer system restrictions.
+
+
+
+    Permission Flow  Wide Screen Adaptation
+
+          All permission messages (Bottom Sheet 1, Bottom
+        Sheet 2, Bottom Sheet 3) are displayed as modal
+        dialogs on wide screens.
+       The dialog is shown centered on the screen over a
+       dimmed background.
+
+     Behavior
+
+       The permission logic, sequence, and display
+         conditions remain exactly the same as on mobile
+         devices.
+        Only the presentation format changes:
+           Mobile devices → Bottom Sheets
+          Wide screens (840dp+) → Dialog
+
+       Blocking and non-blocking behavior follows the rules defined in the main Permission Flow
+         section
+
+
+
+
+Smart Step Milestone #1 Requirements
+
+PAGE 10
+  í Navigation Drawer
+
+     The Navigation Drawer provides access to the main sections of the app and actions related to
+     user settings and the current step tracking state.
+
+     The drawer opens when the user taps the menu (burger) icon on the Main Screen (Home).
+
+
+    General Behavior
+
+      The Navigation Drawer slides in from the left side of the screen.
+             It is displayed above the main content.
+       The drawer can be closed by:
+           swiping it back,
+           tapping outside the drawer area,
+            selecting a menu item
+
+
+    State 1    Default
+
+     This is the standard state displayed under normal app conditions.
+
+    Menu Items
+
+        Step Goal - opens the screen for configuring the daily step goal.
+        Personal Settings - opens the userˇs
+
+
+
+     State 2   Background Access Issue
+
+       This state is shown only when the user has not granted background execution access to the
+      app.
+
+       Additional Menu Item
+
+           Fix the ˝Stop Counting Steps˛ issue
+            Displayed at the top of the Navigation Drawer.
+          Has higher priority than the default menu items.
+          Opens the existing Bottom Sheet 3   Background Access Recommended to explain
+           and request background step tracking.
+
+      Item Behavior
+
+         Tapping the item opens Bottom Sheet 3   Background Access Recommended that explains
+       why background access is needed for proper step tracking.
+
+       After Permission Is Granted
+
+        The Fix the ˝Stop Counting Steps˛ issue item is no longer displayed.
+        The Navigation Drawer returns to the Default State.
+
+
+
+
+
+Smart Step Milestone #1 Requirements                                                                                                                                                                                                                            10
+
+PAGE 11
+  ¯ Step Goal Bottom Sheet
+
+     This Bottom Sheet is used to configure the daily step goal. The goal defines the value against
+     which the current step count is compared on the Main Screen (Home).
+
+     The Bottom Sheet opens when the user selects Step Goal from the Navigation Drawer.
+
+
+     Presentation
+
+      The Bottom Sheet slides up from the bottom of the screen
+        over the current content.
+       The underlying screen is dimmed.
+       The content inside the Bottom Sheet can scroll vertically if
+              it does not fit within the available screen space.
+      A centered title is displayed at the top: Step Goal
+
+
+    Goal Selection
+
+     A vertical scrollable column of numeric values is displayed below the title.
+       The column contains daily step goal values in the range:
+           from 1000 to 40000 steps.
+        Values change via vertical scrolling.
+       The selection indicator remains fixed, while only the list of numbers scrolls.
+       The value aligned with the selection indicator is considered selected.
+       The currently saved goal is preselected when the Bottom Sheet is opened
+
+
+     Actions
+
+      Save
+          Saves the selected value as the new daily goal.
+           Closes the Bottom Sheet.
+          Updates the goal display on the Main Screen (Home).
+        Cancel
+           Closes the Bottom Sheet.
+           Discards all changes and keeps the previous goal value
+
+
+    Behavior And State Handling
+
+      The Bottom Sheet does not close automatically when the value changes.
+       The user must explicitly confirm or cancel the changes.
+        Closing the Bottom Sheet without saving behaves the same as the Cancel action.
+       The selected value must not be reset after configuration changes (e.g. screen rotation) while
+        the Bottom Sheet is open.
+              If the Bottom Sheet was open before a configuration change, it must remain open afterward
+
+
+Smart Step Milestone #1 Requirements                                                                                                                                                                                                                            11
+
+PAGE 12
+  d My Profile (Personal Settings Screen)
+
+     The My Profile screen is used to edit the userˇs personal data after the initial app setup.
+
+     The screen is opened from the  Personal
+
+
+     Relation to Onboarding My Profile
+
+     This screen fully reuses the logic, structure, and behavior of
+     the My Profile Screen (First Launch) described earlier in the
+     document. All fields, pickers, dialogs, and interaction rules
+     remain unchanged.
+
+
+     Relation to Onboarding My Profile
+
+      The  Skip button is not displayed.
+       The informational text “This information helps calculate your
+          activity more accurately” is not shown.
+        Instead of the description, a simple title Personal Settings
+           is displayed
+
+
+  ª Exit Confirmation Dialog
+
+     This dialog is used to confirm a full app exit. It informs the user that after exiting, the app will
+     not run in the background and step counting will stop.
+
+     The dialog is shown when the user selects Exit from the Navigation Drawer.
+
+
+     Content
+
+      An icon visually associated with power off or app
+         termination.
+      A confirmation message: “The app will fully close and will
+        not run in the background.”
+      Ok button:
+           Confirms the user’s intent to exit the app.
+              Initiates full application termination
+
+        After confirmation  :
+                 all active app processes are stopped,
+          background execution is not maintained,
+           step counting stops until the app is launched again.
+       The app must not continue running in the background after this action.
+       The app must not attempt to restart background processes after an explicit user exit.
+       The next app launch is treated as a new session
+
+
+Smart Step Milestone #1 Requirements                                                                                                                                                                                                                            12
+
+PAGE 13
+    Useful Links for This Challenge
+
+    Guide to app architecture
+      Create a Splash Screen
+    UX With Material3
+        Full Guide to Material3 Theming
+      Request runtime permissions
+     Bottom sheets
+      DataStore
+      Physical Activity Permission
+      Ignore Battery Optimization
+     Save data in a local database using Room
+     The Full Jetpack Compose Responsive UI Crash Course
+    How to Save & Restore the Scroll Position of a LazyColumn Persistently
+       Stateful vs. Stateless Composables
+      State Hoisting in Compose
+     Managing State in Jetpack Compose (Codelab)
+
+
+
+
+
+Smart Step Milestone #1 Requirements                                                                                                                                                                                                                            13

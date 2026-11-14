@@ -1,0 +1,375 @@
+PAGE 1
+   Smart Step Milestone #4 Requirements
+
+
+     This document describes the requirements for the fourth development milestone (Milestone
+     #4) of the Smart Step application.
+
+     Milestone #4 focuses on introducing weekly activity reports and detailed analytics views. At this
+      stage, the application is extended with a dedicated Weekly Activity Report screen that allows
+     users to review their activity data by week, switch between different metrics (Steps, Calories,
+     Time, Distance), and better understand trends and progress over time. This milestone builds on
+     the tracking, metrics, and AI-driven insights introduced in the previous milestones.
+
+     The mockups define the overall appearance and expected behavior of the interface. Specific
+      technical decisions (component structure, state handling, animation implementation) are left to
+     the participants, as long as the final result follows the described logic and interaction patterns.
+
+     You can find the Smart Step mockups here:
+
+
+        https://www.figma.com/design/aTiGCCavPLtgZNGXcV23H6/Smart-
+         Step?node-id=67-2165
+
+
+
+    Milestone #4 Goal
+
+       Introduce the Weekly Activity Report screen with aggregated weekly data
+
+         Display a Top Summary Card for the active metric and selected week
+
+        Support switching between Steps, Calories, Time, and Distance via bottom metric tabs
+
+        Define active, inactive, and no-data states for daily report items
+
+        Provide adaptive layouts for mobile and wider screen
+
+
+     Icons
+
+     You may use Material Design icons where appropriate. If a suitable Material icon is not available,
+     use the custom icons provided in the Figma mockups.
+
+      In Figma, any icon or image can be exported by selecting the element and clicking ˝Export˛ in
+     the right-hand panel. In this panel, you can also choose the desired format (PNG, SVG, etc.).
+
+
+   Adaptive Layouts
+
+     The app must support two breakpoints:
+
+      Up to 840 dp ™ mobile layout.
+       From 840 dp and above ™ wide-screen layout.
+
+Smart Step Milestone #4 Requirements
+
+PAGE 2
+              Technical Requirements
+
+  È Main Screen   Weekly Report Entry
+
+     The Main Screen is updated to provide access to the Weekly Activity Report. A textual label
+
+
+
+     Layout
+
+      The “Report” label is placed on the right side of the Step
+        Counter Card
+      The label is top -aligned relative to the primary step count value, visually associating it with
+        the main metric.
+       The label is informational only and does not have its own interactive state
+
+
+     Interaction Behavior
+
+      The Step Counter Card acts as a general entry point to the Weekly Activity Report.
+        Tapping on any non-interactive area of the card navigates the user to the Weekly Activity
+        Report screen.
+         Existing interactive elements inside the card retain their original behavior, including:
+             edit steps action,
+            play / pause step tracking
+
+
+  Ê Weekly Activity Report
+
+     The Report screen is designed to provide a detailed overview
+      of the userˇs weekly activity statistics. It allows users to analyze
+      their progress for a selected week and compare daily values
+     across different activity metrics.
+
+     The screen operates with four core activity metrics: Steps,
+      Calories, Time, Distance. At any given moment, only one metric
+       is active, determined by the userˇs selection in the bottom tab
+      bar.
+
+       All primary elements of the screen   including the summary
+     card and  the
+
+
+
+
+
+Smart Step Milestone #4 Requirements
+
+PAGE 3
+    Top Bar
+
+     The Top Bar is located at the top of the screen and contains:
+
+        a Back button (arrow icon) on the left;
+        the Report title centered.
+
+     Back button behavior:
+
+        tapping the button returns the user to the Main Screen;
+        the Report screen is removed from the back stack, without preserving its internal state.
+
+
+    Top Summary Card
+
+     Below the Top Bar, a primary summary card is displayed. This card presents weekly statistics for
+     the currently active metric. The card provides a quick overview of overall progress for the
+     selected week.
+
+     The Top Summary Card displays:
+
+        the name of the active metric (Steps / Calories / Minutes / Kilometers);
+        a primary numeric value representing the total value for the selected week;
+        a secondary text label in the format: Daily average: X, where the unit depends on the active
+         metric:
+           Steps
+
+
+
+
+
+   Week Selector
+
+     The Week Selector is located below the Top Summary Card and is used to navigate between
+     weekly reports.
+
+     The selector consists of the following elements:
+
+        a previous week button (left arrow);
+        a date range label in the format: Nov 16  Nov 22;
+        a next week button (right arrow).
+
+    Week
+
+
+
+
+
+Smart Step Milestone #4 Requirements
+
+PAGE 4
+       Tapping the next week button:
+           navigates to the next calendar week only if it has already started.
+              If the next week has not started yet:
+           the next week button is disabled.
+
+     Date Range
+
+      A week is defined as a fixed calendar week, starting on Monday and ending on Sunday.
+       The displayed range always covers 7 consecutive calendar days (e.g. Nov 16 – Nov 22).
+       The week range is independent of the day when the user started using the app.
+              If the user installs or starts using the app mid-week, the current calendar week is still shown,
+       even if some days contain no data.
+
+     General Logic
+
+       The selected week defines the time range for all data displayed on the screen.
+      When the week changes:
+           the Top Summary Card updates to reflect aggregated data for the selected week;
+           the daily list updates to show values for each day of that week.
+       The currently selected metric tab (Steps / Calories / Time / Distance) remains unchanged
+       when switching weeks.
+        Changing the week refreshes all displayed data for the active metric only, within the newly
+        selected date range
+
+
+    Weekly Breakdown List
+
+     This section displays a detailed breakdown of activity data for each day of the selected week.
+
+     Structure
+
+       The list always contains 7 items, one for each day of the week (Monday ™ Sunday).
+       Days are ordered chronologically within the selected week.
+       Each list item represents one calendar day.
+       The weekly list is scrollable.
+
+    Day Item Content
+
+     Each day item includes:
+
+       Day name (e.g. Monday, Tuesday).
+        Primary value based on the currently active metric
+         Unit corresponding to the active metric.
+      A status icon displayed in the top-right corner of the item.
+
+     Status Icons
+
+     Each day item displays a status icon that reflects its state:
+
+         Check icon  shown for completed past days that have recorded data.
+
+
+
+
+
+Smart Step Milestone #4 Requirements
+
+PAGE 5
+     Goal Display
+
+       The Goal label is shown only when the active metric is Steps.
+        Example: Goal: 6000 steps
+        For all other metrics (Calories, Time, Distance), the Goal is not
+         displayed.
+
+    No Data State
+
+              If there is no data available for a given day, the item is displayed in an inactive state.
+        This may occur when:
+           the day has not occurred yet (future days within the selected week), or
+           the app was installed mid-week, and no historical data exists for earlier days.
+          In this case:
+           the primary value is shown as 0,
+          a ˝No data˛ label is displayed,
+           the item appears visually muted to indicate inactivity.
+       The ˝No data˛ label is shown consistently for all metrics.
+
+     Active Day Highlight
+
+       The current day (if it belongs to the selected week) is visually highlighted.
+        This helps the user quickly identify
+
+
+
+
+
+    Bottom Metric Tabs
+
+     The Bottom Metric Tabs component is a fixed navigation element located at the bottom of the
+     Report screen. It is used to switch between different types of weekly analytics and defines the
+      active metric for the entire screen.
+
+      Available Metrics
+
+     The Bottom Metric Tabs include four tabs: Steps, Calories, Time, Distance. Each tab consists of:
+
+        a metric-specific icon;
+        a text label representing the metric name.
+
+     Active Tab Behavior
+
+        Only one tab can be active at a time.
+       The active tab is visually highlighted (according to the design system).
+       The active tab determines which metric data is displayed across the Report screen.
+
+
+Smart Step Milestone #4 Requirements
+
+PAGE 6
+     Impact on Report Screen Content
+
+    When the user selects a different tab:
+
+       Top Summary Card updates immediately:
+           the metric title changes;
+           the primary value (weekly total) updates;
+           the Daily Average value and its unit update accordingly.
+       Weekly Breakdown List updates:
+             daily values reflect the selected metric;
+            additional elements appear or disappear depending on the metric (for example, Goal is
+         shown only for Steps).
+      Week Selector remains unchanged and keeps the currently selected week.
+
+       All visible data on the screen always corresponds to the currently active metric.
+
+     Navigation Behavior
+
+        Switching tabs:
+          does not open a new screen;
+            triggers an immediate in-place content update.
+       The selected tab remains active until another tab is chosen.
+
+     Layout and Scrolling
+
+       Bottom Metric Tabs are fixed to the bottom of the screen.
+       They do not scroll with the content.
+        Only the Weekly Breakdown List is scrollable.
+       The Top Summary Card and Week Selector remain visible while scrolling the list.
+
+     Default State
+
+      When the Report screen is opened for the first time, Steps is selected by default.
+           All Report screen components are initialized using the Steps metric.
+
+
+  ʥ  Report Screen   Wide Screen Adaptation
+
+    On wider devices (tablets, large phones, landscape mode), the Report screen preserves the
+    same logic, structure, and hierarchy as the mobile version. The differences are limited to layout
+     composition and width constraints, without introducing new behaviors.
+
+
+    General Principles
+
+          All primary screen elements are center-aligned.
+       The vertical order of elements remains unchanged.
+         Navigation, interactions, and screen behavior are identical to the mobile layout
+
+
+
+
+
+Smart Step Milestone #4 Requirements
+
+PAGE 7
+    Fixed Containers
+
+      The Top Summary Card, Week Selector, and Bottom Metric Tabs are centered horizontally.
+       Each of these components uses a fixed width of 394 dp.
+       These elements do not stretch to fill the screen width, regardless of device size
+
+
+    Weekly Day List
+
+      The list of days is displayed in two columns.
+       The entire list is placed inside a centered container with a maximum width of 600 dp.
+       Each Day Item keeps the same visual design, states, and behavior as defined for the mobile
+         version.
+         Vertical scrolling applies only to the weekly day list, while the Top Summary Card, Week
+         Selector, and Bottom Metric Tabs remain static
+
+
+
+
+
+Smart Step Milestone #4 Requirements
+
+PAGE 8
+  Useful Links for This Challenge
+
+ G emini API quickstart
+   Gemini API
+   Monitor connectivity status
+  Read network state
+   Foreground services overview
+   Foreground Services video
+   About notifications
+   Guide to app architecture
+   Create a Splash Screen
+  UX With Material3
+    Full Guide to Material3 Theming
+   Request runtime permissions
+   Bottom sheets
+   DataStore
+   Physical Activity Permission
+   Ignore Battery Optimization
+   Save data in a local database using Room
+  The Full Jetpack Compose Responsive UI Crash Course
+  How to Save & Restore the Scroll Position of a LazyColumn Persistently
+   Stateful vs. Stateless Composables
+   State Hoisting in Compose
+   Managing State in Jetpack Compose (Codelab)
+
+
+
+
+
+Smart Step Milestone #4 Requirements

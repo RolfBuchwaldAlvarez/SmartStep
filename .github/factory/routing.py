@@ -25,6 +25,7 @@ SPLIT_AT = 13
 MIN_LEVEL = 2
 STATE_MARK = "<!-- factory-state "
 STATE_WRITER = "github-actions[bot]"                       # the conductor's workflow token
+TIMEOUT_MARK = "<!-- factory-timeout "
 SEVERITIES = ("minor", "major", "critical")
 # Explicit tags first; Codex's P0-P3 as a fallback (P0 critical, P1-P2 major, P3 minor).
 TAG = re.compile(r"\[(critical|major|minor|blocking|non-blocking|p[0-3])\]", re.IGNORECASE)
@@ -47,6 +48,48 @@ def points_of(labels) -> int | None:
 def next_step(n: int) -> int:
     """The next Fibonacci value above n (21 and beyond: 34, which still means split)."""
     return next((f for f in FIB if f > n), 34)
+
+
+def timeout_floor(comments, head: str, author: str, judges=(), produced_level: int = 0) -> int:
+    """Trusted timeout evidence, scoped to this head/role; repeated evidence is idempotent.
+
+    author/judges are exact GitHub logins supplied by the conductor, not by the
+    comment. A null level on PR review/proofread/update uses the level that
+    produced the head; fix and ticket implementation records need their run level.
+    """
+    floor = 0
+    for comment in comments:
+        body = comment.get("body") or ""
+        if not isinstance(body, str) or len(body) > 4096 or not body.startswith(TIMEOUT_MARK):
+            continue
+        try:
+            event = json.loads(body[len(TIMEOUT_MARK):body.index(" -->")])
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(event, dict) or set(event) != {"version", "kind", "head", "level", "run_id"}:
+            continue
+        if type(event["version"]) is not int or event["version"] != 1 or event["head"] != head:
+            continue
+        if not isinstance(event["run_id"], str) or not re.fullmatch(r"[0-9a-f]{32}", event["run_id"]):
+            continue
+        actor = (comment.get("user") or {}).get("login")
+        kind = event["kind"]
+        if head == "ticket":
+            if kind != "implement" or actor != author:
+                continue
+        elif kind == "review":
+            if actor not in judges:
+                continue
+        elif kind not in ("proofread", "fix", "update") or actor != author:
+            continue
+        level = event["level"]
+        if kind in ("review", "proofread", "update"):
+            if level is not None:
+                continue                                # these commands never run at a fix label's level
+            level = produced_level
+        if type(level) is int and level in FIB:
+            floor = max(floor, next_step(level))
+    return floor
 
 
 def step_below(n: int) -> int:
@@ -156,6 +199,31 @@ def estimate_of(body: str) -> int | None:
     """The points of a comment starting `Estimate: <n> – reasoning`, if n is a Fibonacci value (not quoted)."""
     match = ESTIMATE.match(body or "")
     return int(match.group(1)) if match and int(match.group(1)) in FIB else None
+
+
+FINDINGS = re.compile(r"^[\s*_]*Ticket findings:[\s*_]*", re.IGNORECASE | re.MULTILINE)
+FINDING_CATEGORIES = ("UNTESTABLE_CRITERION", "SCOPE_TOO_BROAD", "MISSING_DEPENDENCY", "CONTRADICTS_SPEC", "UNCLEAR")
+FINDING = re.compile(r"^[\s*_\-+\d.)]*`?(" + "|".join(FINDING_CATEGORIES) + r")\b`?[\s*_]*[:\u2013\u2014-]?\s*(\S.*)$")
+REVISED = re.compile(r"^[\s*_]*Revised:", re.IGNORECASE)
+
+
+def findings_of(body: str) -> list[tuple[str, str]] | None:
+    """The ticket findings in an estimate comment's `Ticket findings:` part: [] for `none` (or only findings
+    without a detail, which do not count), [(category, detail), ...] otherwise, None without the part."""
+    match = FINDINGS.search(body or "")
+    if not match:
+        return None
+    found = []
+    for line in (body or "")[match.end():].splitlines():
+        finding = FINDING.match(line)
+        if finding and finding.group(2).strip(" *_`:\u2013\u2014-"):
+            found.append((finding.group(1), finding.group(2).strip()))
+    return found
+
+
+def revised(body: str) -> bool:
+    """A drafter's answer to ticket findings: a comment starting `Revised:` (not quoted)."""
+    return bool(REVISED.match(body or ""))
 
 
 def poker(estimates: dict) -> tuple[str, int | None]:

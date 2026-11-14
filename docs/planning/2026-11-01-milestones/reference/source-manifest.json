@@ -1,0 +1,63 @@
+{
+  "received": "2026-11-01",
+  "brain_reference_commit": "14a92d572ee5c67ec7b231fe66ab7a3f5d4ec08c",
+  "sources": [
+    {
+      "milestone": 1,
+      "original_filename": "SmartStep_Milestone1_Requirements.pdf",
+      "pages": 13,
+      "pdf_sha256": "b10ba94ffd417071009fcb9377d59120c82f0f079839f3f77a4e11c5d33fe5ed",
+      "text_extract": "milestone-1-source.txt",
+      "text_sha256": "c54d6f498051a491f369111fb26f1d33280556bf47514cfbbce4e7027b829860",
+      "rendered_pages": [
+        "m1-p02.png",
+        "m1-p04.png",
+        "m1-p06.png",
+        "m1-p07.png",
+        "m1-p08.png",
+        "m1-p09.png",
+        "m1-p10.png",
+        "m1-p11.png",
+        "m1-p12.png"
+      ]
+    },
+    {
+      "milestone": 2,
+      "original_filename": "SmartStep_Milestone2_Requirements.pdf",
+      "pages": 9,
+      "pdf_sha256": "a6fc36716e8c9900c34398d0ee7cb6b595afee2645bf8749848b4a7e2c53c2fc",
+      "text_extract": "milestone-2-source.txt",
+      "text_sha256": "63fc4636f8dfb08242fe945664ff5e956fc89efb94c5aa004854ef94ad84a9dc",
+      "rendered_pages": [
+        "m2-p02.png",
+        "m2-p04.png",
+        "m2-p07.png",
+        "m2-p08.png"
+      ]
+    },
+    {
+      "milestone": 3,
+      "original_filename": "SmartStep_Milestone3_Requirements.pdf",
+      "pages": 8,
+      "pdf_sha256": "ffc4a265365b964132f0e23ba2fadc89e121274b25b17340737e8d2853be8127",
+      "text_extract": "milestone-3-source.txt",
+      "text_sha256": "572e6491e6c23d2085f9dba2ea972d216e6d33f1c47e0470ce6fdf46efc9a0a7",
+      "rendered_pages": [
+        "m3-p05.png",
+        "m3-p07.png"
+      ]
+    },
+    {
+      "milestone": 4,
+      "original_filename": "SmartStep_Milestone4_Requirements.pdf",
+      "pages": 8,
+      "pdf_sha256": "cab5eccc3c1c8c13df85382c102c6a892284b13861bf6b92e48c9e945acd42c7",
+      "text_extract": "milestone-4-source.txt",
+      "text_sha256": "a1843c4220ac01ffb62da6b3f06b0aea2cf202d695273fe3f6821d564961bc71",
+      "rendered_pages": [
+        "m4-p02.png",
+        "m4-p07.png"
+      ]
+    }
+  ]
+}

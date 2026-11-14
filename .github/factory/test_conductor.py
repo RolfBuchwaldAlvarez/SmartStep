@@ -1,8 +1,11 @@
 """Tests for conductor.py. Run: python3 -m unittest discover -s .github/factory"""
 
 import importlib.util
+import json
+import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import unquote
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("conductor", HERE / "conductor.py")
@@ -32,10 +35,26 @@ P3 = frozenset({"points:3"})
 
 
 class Config(unittest.TestCase):
+    def test_timeout_opt_in_requires_exactly_one_true(self):
+        cases = [([], False), (["false"], False), (["true"], True),
+                 (["True"], False), (["yes"], False), (["true suffix"], False),
+                 ([""], False), (["true", "true"], False),
+                 (["false", "true"], False), (["true", "false"], False),
+                 (["yes", "true"], False), (["true", "yes"], False)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "factory.yml"
+            for values, expected in cases:
+                with self.subTest(values=values):
+                    path.write_text("implementers: claude\n" + "".join(
+                        f"timeout_signals: {value}\n" for value in values))
+                    config = c.load_config(path)
+                    self.assertIs(config["timeout_signals"], expected)
+                    self.assertEqual(config["implementers"], ["claude"])
+
     def test_factory_yml(self):
         self.assertEqual(CONFIG, {"implementers": ["codex", "claude"], "judges": ["claude", "hermes", "codex"],
                                   "judges_per_pr": 2, "max_rounds": 3, "required_checks": ["android-ci"],
-                                  "estimators": ["codex", "claude"]})
+                                  "estimators": ["codex", "claude", "hermes"], "timeout_signals": True})
 
     def test_former_single_implementer_key(self):
         path = HERE / "_legacy.yml"
@@ -122,8 +141,8 @@ class Poker(unittest.TestCase):
 
     def test_reconcile_sets_the_points_and_asks_the_owner(self):
         ticket = item(5, "factory:estimate")
-        comments = [{"user": {"login": "codex-bot-rba[bot]"}, "body": "Estimate: 3 – two layers, known pattern"},
-                    {"user": {"login": "claude-bot-rba[bot]"}, "body": "Estimate: 5 – three layers and a Room table"}]
+        comments = [vote("codex", "Estimate: 3 – two layers, known pattern\nTicket findings: none"),
+                    vote("claude", "Estimate: 5 – three layers and a Room table\n\nTicket findings: none")]
         gh = FakeGitHub(lists=dict(lists(open_all=[ticket]), **{
             "/issues?state=open&labels=factory:estimate": [ticket], "/issues/5/comments": comments}))
         c.reconcile(gh, CONFIG, NOW)
@@ -132,6 +151,86 @@ class Poker(unittest.TestCase):
 
 
 class Routed(unittest.TestCase):
+    def test_regular_signal_steps_above_initial_implementation_floor(self):
+        for checks, reviews in (("red", []), ("green", [dict(review("claude"), id=42)])):
+            with self.subTest(checks=checks):
+                gh = FakeGitHub()
+                labels = c.route_pr(gh, pr(), reviews, checks, {"complexity:underestimated"},
+                                    {"next:fix:codex"}, 3, CONFIG, initial_floor=5)
+                self.assertIn("level:8", labels)
+                state = stored([gh.calls[-1][2]["body"]])
+                self.assertEqual(state["floor"], 8)
+                replay = FakeGitHub(lists={"/issues/9/comments": [state_comment(state)]})
+                self.assertEqual(c.route_pr(replay, pr(), reviews, checks, {"complexity:underestimated"},
+                                           {"next:fix:codex"}, 3, CONFIG, initial_floor=5), labels)
+                self.assertFalse(replay.calls)
+
+    def test_timeout_on_current_head_raises_floor_without_ci_or_review_failure(self):
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": '<!-- factory-timeout ' + json.dumps({"version": 1, "kind": "fix", "head": HEAD,
+                         "level": 3, "run_id": "a" * 32}) + ' -->\nRun timed out.'}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        labels = c.route_pr(gh, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:5", labels)                  # a timeout at 3 raises the floor to 5
+
+    def test_implementation_timeout_raises_next_ticket_level(self):
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": '<!-- factory-timeout ' + json.dumps({"version": 1, "kind": "implement", "head": "ticket",
+                         "level": 5, "run_id": "a" * 32}) + ' -->\nRun timed out.'}
+        ticket = item(5, "factory:ready", "points:5", "complexity:timeout:codex")
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_all=[ticket]), **{"/issues/5/comments": [note]}))
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertIn(("POST", "/issues/5/labels", {"labels": ["level:8"]}), gh.calls)
+        self.assertIn(("DELETE", "/issues/5/labels/complexity%3Atimeout%3Acodex", None), gh.calls)
+
+    def test_timeout_replay_does_not_raise_again_and_old_heads_are_ignored(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 3, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        first = c.route_pr(gh, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        state_note = {"id": 99, "user": {"login": c.routing.STATE_WRITER}, "body": gh.calls[-1][2]["body"]}
+        repeat = FakeGitHub(lists={"/issues/9/comments": [note, state_note, note]})
+        self.assertEqual(c.route_pr(repeat, pr(), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG), first)
+        self.assertFalse(repeat.calls)                    # no state rewrite or escalation on duplicate evidence
+        stale = FakeGitHub(lists={"/issues/9/comments": [note]})
+        labels = c.route_pr(stale, pr(head={"sha": OLD}), [], "pending", set(), {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:3", labels)
+
+    def test_timeout_floor_preserves_owner_stop_and_split_limit(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 8, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        for desired, expected in [({"needs:owner"}, {"needs:owner"}), ({"next:fix:codex"}, {"needs:split"})]:
+            gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+            self.assertEqual(c.route_pr(gh, pr(), [], "pending", set(), desired, 8, CONFIG), expected)
+        self.assertEqual(c.ticket_labels(False, CONFIG, frozenset({"points:8"}), 13), {"needs:split"})
+
+    def test_disabled_protocol_and_label_without_evidence_do_not_escalate(self):
+        event = {"version": 1, "kind": "fix", "head": HEAD, "level": 8, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        gh = FakeGitHub(lists={"/issues/9/comments": [note]})
+        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout:codex"}, {"next:fix:codex"},
+                         5, dict(CONFIG, timeout_signals=False))
+        self.assertIn("level:3", got)
+        gh = FakeGitHub()
+        got = c.route_pr(gh, pr(), [], "pending", {"complexity:timeout:codex"}, {"next:fix:codex"}, 5, CONFIG)
+        self.assertIn("level:3", got)
+
+    def test_initial_implementation_floor_carries_into_its_pr(self):
+        event = {"version": 1, "kind": "implement", "head": "ticket", "level": 5, "run_id": "a" * 32}
+        note = {"user": {"login": "codex-bot-rba[bot]"},
+                "body": c.routing.TIMEOUT_MARK + json.dumps(event) + " -->"}
+        ticket = item(5, "factory:ready", "points:5")
+        pull = pr(labels=[])
+        gh = FakeGitHub(lists=dict(lists(open_ready=[ticket], open_all=[ticket, pull], open_prs=[pull]),
+                                  **{"/issues/5/comments": [note]}), prs={9: pull})
+        c.reconcile(gh, CONFIG, NOW)
+        states = [body["body"] for method, path, body in gh.calls if path == "/issues/9/comments"]
+        self.assertEqual(c.routing.read_state([{"id": 99, "user": {"login": c.routing.STATE_WRITER},
+                                               "body": states[0]}])[1]["floor"], 8)
+
     def test_fix_level_follows_severity_and_floor(self):
         fix = {"next:fix:codex", "next:judge:hermes"}
         self.assertIn("level:2", c.routed(fix, 8, 0, "minor", "normal"))
@@ -276,6 +375,126 @@ class FakeGitHub:
         return self.lists.get(path, [])
 
 
+def vote(agent, body):
+    login = "RolfBuchwaldAlvarez" if agent == "owner" else f"{agent}-bot-rba[bot]"
+    return {"user": {"login": login}, "body": body}
+
+
+FINDING = "Estimate: 3 – two layers\nTicket findings:\n- UNTESTABLE_CRITERION: 'works well' has no check"
+CLEAN = "Estimate: 3 – two layers\nTicket findings: none"
+
+
+class TicketCheck(unittest.TestCase):
+    def test_estimators_skip_the_drafter(self):
+        config = {"estimators": ["codex", "claude", "hermes"]}
+        self.assertEqual(c.estimators_for("claude", config), ["codex", "hermes"])
+        self.assertEqual(c.estimators_for("owner", config), ["codex", "claude"])
+        self.assertEqual(c.estimators_for(None, config), ["codex", "claude"])
+
+    def test_a_vote_needs_both_parts(self):
+        estimates, findings, rounds = c.poker_round(
+            [vote("codex", "Estimate: 3 – two layers"), vote("hermes", CLEAN)], ["codex", "hermes"], "claude")
+        self.assertEqual((estimates, rounds), ({"codex": None, "hermes": 3}, 0))
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"next:estimate:codex"}, None))
+
+    def test_findings_send_the_ticket_to_its_drafter(self):
+        estimates, findings, rounds = c.poker_round([vote("codex", FINDING), vote("hermes", CLEAN)],
+                                                    ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"next:revise:claude"}, None))
+
+    def test_findings_come_before_a_size_disagreement(self):
+        far = "Estimate: 13 – a sync layer\nTicket findings:\n- SCOPE_TOO_BROAD: split sync from the UI"
+        estimates, findings, rounds = c.poker_round([vote("codex", far), vote("hermes", "Estimate: 2 – one field\n"
+                                                    "Ticket findings: none")], ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"next:revise:claude"}, None))
+
+    def test_revised_starts_a_new_round(self):
+        comments = [vote("codex", FINDING), vote("hermes", CLEAN), vote("claude", "Revised: 1. fixed, criterion now 'p95 < 200 ms'")]
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+        self.assertEqual((estimates, rounds), ({"codex": None, "hermes": None}, 1))
+        comments += [vote("codex", CLEAN), vote("hermes", CLEAN)]
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"), (set(), 3))
+
+    def test_revised_by_someone_else_does_not_count(self):
+        comments = [vote("codex", FINDING), vote("hermes", CLEAN), vote("codex", "Revised: no")]
+        self.assertEqual(c.poker_round(comments, ["codex", "hermes"], "claude")[2], 0)
+
+    def test_revised_by_a_stranger_does_not_count_on_an_unknown_drafters_ticket(self):
+        comments = [vote("codex", FINDING), vote("claude", CLEAN),
+                    {"user": {"login": "someone"}, "body": "Revised: no"}]
+        self.assertEqual(c.poker_round(comments, ["codex", "claude"], None)[2], 0)
+
+    def test_owner_restart_after_the_round_limit(self):
+        comments = []
+        for _ in range(3):
+            comments += [vote("codex", FINDING), vote("hermes", CLEAN)]
+            comments.append(vote("claude", "Revised: rejected, the criterion is measurable"))
+        comments = comments[:-1]                           # the third round ended in needs:owner
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"needs:owner"}, None))
+        comments.append(vote("owner", "Revised: narrowed the scope"))
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+        self.assertEqual(estimates, {"codex": None, "hermes": None})
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"next:estimate:codex", "next:estimate:hermes"}, None))
+        # Clean votes give points; findings go back to the owner, the limit stays reached.
+        clean = comments + [vote("codex", CLEAN), vote("hermes", CLEAN)]
+        estimates, findings, rounds = c.poker_round(clean, ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"), (set(), 3))
+        again = comments + [vote("codex", FINDING), vote("hermes", CLEAN)]
+        estimates, findings, rounds = c.poker_round(again, ["codex", "hermes"], "claude")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                         ({"needs:owner"}, None))
+
+    def test_owner_restart_on_an_unknown_drafters_ticket(self):
+        comments = [vote("codex", FINDING), vote("claude", CLEAN), vote("owner", "Revised: clarified")]
+        estimates, findings, rounds = c.poker_round(comments, ["codex", "claude"], None)
+        self.assertEqual((estimates, rounds), ({"codex": None, "claude": None}, 1))
+
+    def test_a_returning_finding_counts_again_up_to_the_round_limit(self):
+        comments = []
+        for round_ in range(3):
+            comments += [vote("codex", FINDING), vote("hermes", CLEAN)]
+            estimates, findings, rounds = c.poker_round(comments, ["codex", "hermes"], "claude")
+            expected = {"needs:owner"} if round_ == 2 else {"next:revise:claude"}
+            self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "claude"),
+                             (expected, None), round_)
+            comments.append(vote("claude", "Revised: rejected, the criterion is measurable"))
+
+    def test_owner_drafted_ticket_with_findings_goes_to_the_owner(self):
+        estimates, findings, rounds = c.poker_round([vote("codex", FINDING), vote("claude", CLEAN)],
+                                                    ["codex", "claude"], "owner")
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, "owner"),
+                         ({"needs:owner"}, None))
+        comments = [vote("codex", FINDING), vote("claude", CLEAN), vote("owner", "Revised: clarified")]
+        self.assertEqual(c.poker_round(comments, ["codex", "claude"], "owner")[2], 1)
+
+    def test_unknown_drafter_with_findings_goes_to_the_owner(self):
+        estimates, findings, rounds = c.poker_round([vote("codex", FINDING), vote("claude", CLEAN)],
+                                                    ["codex", "claude"], None)
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, estimates, findings, rounds, None),
+                         ({"needs:owner"}, None))
+
+    def test_one_estimator_left_after_the_drafter_goes_to_the_owner(self):
+        estimators = c.estimators_for("claude", {"estimators": ["codex", "claude"]})
+        self.assertEqual(c.estimate_labels({"factory:estimate"}, {a: None for a in estimators}),
+                         ({"needs:estimate"}, None))
+
+    def test_reconcile_asks_the_drafter_to_revise(self):
+        ticket = item(5, "factory:estimate", user={"login": "claude-bot-rba[bot]"})
+        gh = FakeGitHub(lists=dict(lists(open_all=[ticket]), **{
+            "/issues?state=open&labels=factory:estimate": [ticket],
+            "/issues/5/comments": [vote("codex", FINDING), vote("hermes", CLEAN)]}))
+        c.reconcile(gh, dict(CONFIG, estimators=["codex", "claude", "hermes"]), NOW)
+        self.assertIn(("POST", "/issues/5/labels", {"labels": ["next:revise:claude"]}), gh.calls)
+        self.assertFalse(any("points:" in str(b) for m, p, b in gh.calls))
+
+
 def item(number, *labels, **extra):
     return dict({"number": number, "labels": [{"name": n} for n in labels]}, **extra)
 
@@ -288,6 +507,30 @@ def lists(open_ready=(), open_all=(), closed_ready=(), open_prs=(), closed_prs=(
 
 
 class Sync(unittest.TestCase):
+    def test_new_reporter_marker_survives_an_older_conductor_snapshot(self):
+        captured = {"complexity:timeout:codex", "level:3", "next:fix:codex"}
+        actual = set(captured)
+        class Concurrent(FakeGitHub):
+            def call(self, method, path, body=None):
+                # Another agent reports after our snapshot, before acknowledgment.
+                if method == "POST" and path == "/issues/9/labels":
+                    actual.add("complexity:timeout:hermes")
+                    actual.update(body["labels"])
+                if method == "DELETE":
+                    actual.discard(unquote(path.rsplit("/", 1)[1]))
+                return super().call(method, path, body)
+        gh = Concurrent()
+        c.sync_labels(gh, 9, captured, {"needs:owner"}, set())
+        self.assertIn("complexity:timeout:hermes", actual)
+        self.assertNotIn("complexity:timeout:codex", actual)
+        self.assertEqual(gh.calls[-1], ("DELETE", "/issues/9/labels/complexity%3Atimeout%3Acodex", None))
+
+    def test_timeout_ack_is_removed_after_obsolete_task_labels(self):
+        gh = FakeGitHub()
+        c.sync_labels(gh, 9, {"complexity:timeout:codex", "level:8", "next:fix:codex"}, {"needs:split"}, set())
+        self.assertEqual(gh.calls[-1], ("DELETE", "/issues/9/labels/complexity%3Atimeout%3Acodex", None))
+        self.assertIn(("DELETE", "/issues/9/labels/next%3Afix%3Acodex", None), gh.calls[:-1])
+
     def test_adds_missing_removes_stale_keeps_others(self):
         gh = FakeGitHub()
         c.sync_labels(gh, 9, {"next:judge:claude", "factory:ready", "bug"}, {"next:judge:hermes"}, {"next:judge:hermes"})
@@ -315,6 +558,17 @@ class Sync(unittest.TestCase):
 
 
 class Reconcile(unittest.TestCase):
+    def test_closed_history_without_an_active_pr_needs_no_timeout_fetch(self):
+        calls = []
+        class Traced(FakeGitHub):
+            def all(self, path):
+                calls.append(path)
+                return super().all(path)
+        closed = item(5, "factory:ready", "points:5")
+        gh = Traced(lists=lists(closed_ready=[closed]))
+        c.reconcile(gh, CONFIG, NOW)
+        self.assertNotIn("/issues/5/comments", calls)
+
     def run_conductor(self, **kw):
         gh = FakeGitHub(lists=lists(**kw), prs={p["number"]: p for p in kw.get("open_prs", ())})
         c.reconcile(gh, CONFIG, NOW)

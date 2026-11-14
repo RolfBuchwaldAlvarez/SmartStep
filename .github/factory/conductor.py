@@ -25,8 +25,12 @@ on the head, checks) and sets or removes labels so that they match:
           factory:ready                  -> none of the conductor's labels
 
 Planning poker: a ticket labeled factory:estimate (and no points yet) gets
-next:estimate:<agent> for each of `estimators`; each posts "Estimate: <n> – reason"
-without reading the others'. At most one Fibonacci step apart: the conductor sets
+next:estimate:<agent> for the first two of `estimators` other than its drafter (the
+ticket's author); each posts "Estimate: <n> – reason" plus a "Ticket findings:" part
+(`none` or findings) without reading the others'. Findings from either: no points,
+next:revise:<drafter>; the drafter answers with a "Revised:" comment, which starts a
+new round (after max_rounds rounds with findings, or for a ticket the owner drafted:
+needs:owner; the owner's "Revised:" starts a new round on any ticket). No findings, at most one Fibonacci step apart: the conductor sets
 points:<higher> and asks the owner to approve; further apart: needs:estimate.
 
 Complexity routing (routing.py, olympus-agents docs/complexity-routing.md):
@@ -45,6 +49,7 @@ Uses only the workflow's own token: labels and comments, nothing else.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -57,6 +62,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import routing  # noqa: E402
+import factory_metrics  # noqa: E402
 
 API = "https://api.github.com"
 OWNER_LOGIN = "RolfBuchwaldAlvarez"
@@ -66,19 +72,22 @@ PROOFREAD = re.compile(r"^[\s*_#>]*Proofread:")
 CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE)
 PROOFREAD_WAIT = 3600
 MANAGED = ("next:", "needs:owner", "needs:points", "needs:split", "needs:estimate", "step:acceptance", "level:",
-           "risk:")
+           "risk:", "complexity:timeout:")
 LABEL_COLORS = {"next:": "1d76db", "needs:": "d93f0b", "step:acceptance": "0e8a16", "level:": "c5def5",
                 "risk:": "fbca04"}
 NEEDS_COMMENTS = {
-    "needs:owner": "a judge reached the round limit without approving. The agents pause until you decide.",
+    "needs:owner": "a round limit was reached (a judge without approving, or planning poker with ticket findings "
+                   "in every round), or planning poker found ticket findings on a ticket you drafted. The agents "
+                   "pause until you decide: on a ticket, set the points yourself, or revise it and post a comment "
+                   "starting with `Revised:` to start a new round.",
     "needs:points": "this ticket has no valid `points:<n>` label (1, 2, 3, 5, 8, 13 or 21). "
                     "Nothing is implemented until it has one.",
     "needs:estimate": "planning poker has no result: the estimates differ by more than one Fibonacci step "
                       "(see the Estimate comments), or `estimators` in factory.yml names fewer than two agents. "
                       "Please set the points:<n> label yourself.",
-    "needs:split": "this PR was escalated to 13 points or more: too uncertain for one PR. The agents pause here. "
-                   "To go on, close it and set the ticket's points to 13 or 21: its implementer then splits it "
-                   "into tickets of at most 8 points for you to approve.",
+    "needs:split": "this work was escalated to 13 points or more: too uncertain for one PR. The agents pause here. "
+                   "To go on, if an open PR exists, close it, and set the ticket's points to 13 or 21: "
+                   "its implementer then splits it into tickets of at most 8 points for you to approve.",
 }
 
 
@@ -87,16 +96,20 @@ NEEDS_COMMENTS = {
 def load_config(path: Path) -> dict:
     """The small `key: value` file .github/factory.yml (lists comma-separated)."""
     config = {"implementers": ["codex"], "judges": ["claude", "hermes"], "judges_per_pr": 2, "max_rounds": 3,
-              "required_checks": [], "estimators": ["codex", "claude"]}
+              "required_checks": [], "estimators": ["codex", "claude"], "timeout_signals": False}
+    timeout_values = []
     for line in path.read_text().splitlines():
         line = line.split("#", 1)[0].strip()
         if ":" not in line:
             continue
         key, value = (part.strip() for part in line.split(":", 1))
-        if key in ("judges", "implementers", "implementer", "required_checks", "estimators"):     # `implementer` is the former single key
+        if key == "timeout_signals":
+            timeout_values.append(value)
+        elif key in ("judges", "implementers", "implementer", "required_checks", "estimators"):     # `implementer` is the former single key
             config["implementers" if key == "implementer" else key] = [v.strip() for v in value.split(",") if v.strip()]
         elif key in ("max_rounds", "judges_per_pr"):
             config[key] = int(value)
+    config["timeout_signals"] = timeout_values == ["true"]
     return config
 
 
@@ -161,7 +174,7 @@ def checks_state(check_runs: list[dict], required: list[str] = ()) -> str:
     return "green"
 
 
-def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset()) -> set[str]:
+def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset(), timeout_floor: int = 0) -> set[str]:
     implementer = implementer_for(set(labels), config)
     if has_pr or implementer == "owner":
         return set()
@@ -171,11 +184,38 @@ def ticket_labels(has_pr: bool, config: dict, labels: frozenset = frozenset()) -
     if points >= routing.SPLIT_AT:
         # Splitting is a task too, at the strength the complexity calls for (owner decision 2026-10-31).
         return set() if "split:done" in labels else {f"next:split:{implementer}", f"level:{points}"}
-    return {f"next:implement:{implementer}", f"level:{points}"}
+    level = max(points, timeout_floor)
+    return {"needs:split"} if level >= routing.SPLIT_AT else {f"next:implement:{implementer}", f"level:{level}"}
 
 
-def estimate_labels(labels: set[str], estimates: dict) -> tuple[set[str], int | None]:
-    """Planning poker on a `factory:estimate` ticket without points: (labels, points to set or None). Pure."""
+def estimators_for(drafter: str | None, config: dict) -> list[str]:
+    """The ticket's estimators: the first two of `estimators` other than its drafter."""
+    return [agent for agent in config["estimators"] if agent != drafter][:2]
+
+
+def poker_round(comments: list[dict], estimators: list[str], drafter: str | None) -> tuple[dict, dict, int]:
+    """The current poker round from a ticket's comments, oldest first: (estimates, findings, earlier rounds).
+    Each `Revised:` comment by the drafter or the owner ends a round; only votes after the last one count. A
+    vote is a comment with both an `Estimate:` line and a `Ticket findings:` part; an agent's later vote
+    replaces its earlier one. Pure."""
+    rounds, start = 0, 0
+    for index, comment in enumerate(comments):
+        author = author_of(comment["user"]["login"])
+        if author and author in (drafter, "owner") and routing.revised(comment.get("body")):
+            rounds, start = rounds + 1, index + 1
+    estimates, findings = {agent: None for agent in estimators}, {agent: [] for agent in estimators}
+    for comment in comments[start:]:
+        agent, body = agent_of(comment["user"]["login"]), comment.get("body")
+        points, found = routing.estimate_of(body), routing.findings_of(body)
+        if agent in estimates and points is not None and found is not None:
+            estimates[agent], findings[agent] = points, found
+    return estimates, findings, rounds
+
+
+def estimate_labels(labels: set[str], estimates: dict, findings: dict | None = None, rounds: int = 0,
+                    drafter: str | None = None, max_rounds: int = 3) -> tuple[set[str], int | None]:
+    """Planning poker on a `factory:estimate` ticket without points: (labels, points to set or None). Pure.
+    Ticket findings come before the size: with findings no points are set, also when the estimates differ."""
     if any(l.startswith("points:") for l in labels):
         # Valid points end the poker; conflicting or invalid ones go to the owner, not into another round.
         return (set() if routing.points_of(labels) is not None else {"needs:points"}), None
@@ -184,6 +224,10 @@ def estimate_labels(labels: set[str], estimates: dict) -> tuple[set[str], int | 
     state, points = routing.poker(estimates)
     if state == "open":
         return {f"next:estimate:{agent}" for agent, value in estimates.items() if value is None}, None
+    if any((findings or {}).values()):
+        if drafter in (None, "owner") or rounds + 1 >= max_rounds:
+            return {"needs:owner"}, None
+        return {f"next:revise:{drafter}"}, None
     if state == "differ":
         return {"needs:estimate"}, None
     return set(), points
@@ -294,14 +338,16 @@ def sync_labels(gh, number: int, current: set[str], desired: set[str], known: se
             gh.call("POST", f"/issues/{number}/comments",
                     {"body": f"@{OWNER_LOGIN} the factory needs you here: {NEEDS_COMMENTS[name]}"})
         print(f"conductor: #{number} + {name}")
-    for name in sorted(current - desired):
+    # Releasing a timeout wakeup is the acknowledgment: obsolete task/level
+    # labels must already be gone before a poller can run again.
+    for name in sorted(current - desired, key=lambda name: (name.startswith("complexity:timeout:"), name)):
         if name.startswith(MANAGED):
             gh.call("DELETE", f"/issues/{number}/labels/{urllib.request.quote(name, safe='')}")
             print(f"conductor: #{number} - {name}")
 
 
 def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], desired: set[str],
-             points: int | None, config: dict) -> set[str]:
+             points: int | None, config: dict, initial_floor: int = 0) -> set[str]:
     """Complexity routing for one PR: findings' severity, risk, escalation floor (state comment)."""
     number, head = pr["number"], pr["head"]["sha"]
     author = author_of(pr["user"]["login"])
@@ -311,11 +357,19 @@ def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], 
     by_judge = {j: [r for r in real if agent_of(r["user"]["login"]) == j] for j in judges_for(author, config)}
     floor, severity = 0, "major"
     if points is not None:
-        comment_id, before = routing.read_state(gh.all(f"/issues/{number}/comments"))
-        state = routing.advance(before, points, head, False)
+        comments = gh.all(f"/issues/{number}/comments")
+        comment_id, before = routing.read_state(comments)
+        produced_default = max(points, initial_floor)
+        state = routing.advance(before, produced_default, head, False)
+        if config.get("timeout_signals"):
+            logins = {v: k for k, v in AGENT_LOGINS.items()}
+            timed_out = routing.timeout_floor(comments, head, pr["user"]["login"],
+                          [logins[j] for j in by_judge if j in logins],
+                          state["levels"].get(head, produced_default))
+            state["floor"] = max(state["floor"], initial_floor, timed_out)
         signal = routing.signal_at(head, checks, by_judge, "complexity:underestimated" in current,
                                    head in state["levels"])
-        state = routing.advance(state, points, head, signal)
+        state = routing.advance(state, produced_default, head, signal)
         floor = state["floor"]
         open_reviews = [r for rs in by_judge.values() for r in rs[-1:]
                         if r.get("commit_id") == head and r.get("state") != "APPROVED"]
@@ -339,6 +393,79 @@ def route_pr(gh, pr: dict, reviews: list[dict], checks: str, current: set[str], 
     return routed(desired, points, floor, severity, risk)
 
 
+def sync_ticket_metrics(gh, ready: list[dict], now: float, config: dict) -> None:
+    """Project ticket evidence into a separate trusted state comment on every linked PR.
+
+    Routing state remains independent. Recompute from API source records, never add to an old counter.
+    Gather a ticket completely before publishing any of its snapshots; a failed read propagates.
+    """
+    if not ready:
+        return
+    history = gh.all("/pulls?state=all")
+    for ticket in ready:
+        attempts = [p for p in history if linked_ticket(p) == ticket["number"] and author_of(p["user"]["login"])]
+        if not attempts:
+            continue
+        # A closed ticket is a historical snapshot once publication and CI have finished.
+        # Inventory still detects new/reopened attempts without reading their evidence.
+        finalizable = ticket.get("state") == "closed" and all(p.get("state") == "closed" for p in attempts)
+        checkpoint, checkpoint_body = None, None
+        if finalizable:
+            signature = {"version": 1, "ticket": {k: ticket.get(k) for k in ("number", "closed_at")},
+                         "points": routing.points_of({l["name"] for l in ticket["labels"]}),
+                         "judges": config["judges"], "judges_per_pr": config["judges_per_pr"],
+                         "attempts": [{"author": p["user"]["login"], "head": p["head"]["sha"],
+                                       **{k: p.get(k) for k in
+                                          ("number", "body", "created_at", "closed_at", "state")}}
+                                      for p in sorted(attempts, key=lambda p: p["number"])]}
+            digest = hashlib.sha256(json.dumps(signature, sort_keys=True).encode()).hexdigest()
+            checkpoint_body = factory_metrics.FINAL_MARK + digest + " -->"
+            checkpoint = next((c for c in gh.all(f"/issues/{ticket['number']}/comments")
+                               if c.get("user", {}).get("login") == routing.STATE_WRITER
+                               and (c.get("body") or "").startswith(factory_metrics.FINAL_MARK)), None)
+            if checkpoint and checkpoint["body"] == checkpoint_body:
+                continue
+        implemented = {author_of(p["user"]["login"]) for p in attempts}
+        snapshots, comments_by_pr = [], {}
+        for pr in attempts:
+            number = pr["number"]
+            comments = gh.all(f"/issues/{number}/comments")
+            comments_by_pr[number] = comments
+            _, state = routing.read_state(comments)
+            eligible = [j for j in dict.fromkeys(config["judges"]) if j not in implemented][:config["judges_per_pr"]]
+            reviews = [r for r in gh.all(f"/pulls/{number}/reviews")
+                       if is_real(r) and agent_of(r["user"]["login"]) in eligible
+                       and not PROOFREAD.match(r.get("body") or "")]
+            inline = {r["id"]: [c.get("body") for c in gh.all(f"/pulls/{number}/reviews/{r['id']}/comments")]
+                      for r in reviews if r["state"] in ("COMMENTED", "CHANGES_REQUESTED")}
+            # Include retained PR commits and older review heads (including those no longer in the diff).
+            heads = {commit["sha"] for commit in gh.all(f"/pulls/{number}/commits")}
+            heads.add(pr["head"]["sha"])
+            heads.update(r["commit_id"] for r in reviews if r.get("commit_id"))
+            checks = [run for head in sorted(heads) for run in gh.all(f"/commits/{head}/check-runs?filter=all")]
+            snapshots.append({"pr": pr, "state": state, "reviews": reviews, "inline": inline, "checks": checks})
+        metrics = factory_metrics.summarize(ticket["number"], routing.points_of({l["name"] for l in ticket["labels"]}),
+                                             snapshots, routing.severity_of, routing.review_findings)
+        body = (factory_metrics.MARK + json.dumps(metrics, sort_keys=True, separators=(",", ":")) + " -->\n"
+                "Factory ticket metrics (observed GitHub evidence, not agent runtime). "
+                "Definitions and limitations: `.github/factory/README.md`, Ticket metrics.")
+        for number, comments in comments_by_pr.items():
+            existing = next((c for c in comments if c.get("user", {}).get("login") == routing.STATE_WRITER
+                             and (c.get("body") or "").startswith(factory_metrics.MARK)), None)
+            if existing is None:
+                gh.call("POST", f"/issues/{number}/comments", {"body": body})
+            elif existing["body"] != body:
+                gh.call("PATCH", f"/issues/comments/{existing['id']}", {"body": body})
+        # Commit the checkpoint last: interrupted publication must be retried, never skipped.
+        if finalizable and all(check.get("status") == "completed"
+                               for snapshot in snapshots for check in snapshot["checks"]
+                               if check.get("name") != OWN_CHECK):
+            if checkpoint is None:
+                gh.call("POST", f"/issues/{ticket['number']}/comments", {"body": checkpoint_body})
+            elif checkpoint["body"] != checkpoint_body:
+                gh.call("PATCH", f"/issues/comments/{checkpoint['id']}", {"body": checkpoint_body})
+
+
 def reconcile(gh, config: dict, now: float) -> None:
     known = {l["name"] for l in gh.all("/labels")}
     prs = gh.all("/pulls?state=open")
@@ -348,16 +475,24 @@ def reconcile(gh, config: dict, now: float) -> None:
         if ticket is not None and author_of(pr["user"]["login"]):
             by_ticket.setdefault(ticket, pr)
     handled = set()
+    ticket_floors = {}
+    def floor_for(issue):
+        number = issue["number"]
+        if number not in ticket_floors:
+            labels = {l["name"] for l in issue.get("labels", [])}
+            implementer = implementer_for(labels, config)
+            login = next((k for k, v in AGENT_LOGINS.items() if v == implementer), None)
+            ticket_floors[number] = routing.timeout_floor(gh.all(f"/issues/{number}/comments"), "ticket", login) \
+                if config.get("timeout_signals") and login else 0
+        return ticket_floors[number]
     for issue in gh.all("/issues?state=open&labels=factory:estimate"):   # planning poker before the points exist
         if issue.get("pull_request"):
             continue
         current = {l["name"] for l in issue["labels"]}
-        estimates = {agent: None for agent in config["estimators"]}
-        for comment in gh.all(f"/issues/{issue['number']}/comments"):
-            agent = agent_of(comment["user"]["login"])
-            if agent in estimates and routing.estimate_of(comment.get("body")) is not None:
-                estimates[agent] = routing.estimate_of(comment["body"])
-        desired, points = estimate_labels(current, estimates)
+        drafter = author_of((issue.get("user") or {}).get("login"))
+        estimates, findings, rounds = poker_round(gh.all(f"/issues/{issue['number']}/comments"),
+                                                  estimators_for(drafter, config), drafter)
+        desired, points = estimate_labels(current, estimates, findings, rounds, drafter, config["max_rounds"])
         if points is not None:
             gh.call("POST", f"/issues/{issue['number']}/labels", {"labels": [f"points:{points}"]})
             gh.call("POST", f"/issues/{issue['number']}/comments",
@@ -371,12 +506,16 @@ def reconcile(gh, config: dict, now: float) -> None:
         if issue.get("pull_request"):
             continue
         current = {l["name"] for l in issue["labels"]}
-        desired = ticket_labels(issue["number"] in by_ticket, config, frozenset(current))
+        desired = ticket_labels(issue["number"] in by_ticket, config, frozenset(current), floor_for(issue))
         sync_labels(gh, issue["number"], current, desired, known)
         handled.add(issue["number"])
     ready = [i for i in gh.all("/issues?state=all&labels=factory:ready") if not i.get("pull_request")]
     tickets = {i["number"] for i in ready}
     ticket_points = {i["number"]: routing.points_of({l["name"] for l in i["labels"]}) for i in ready}
+    ticket_implementers = {i["number"]: implementer_for({l["name"] for l in i["labels"]}, config) for i in ready}
+    for issue in ready:
+        if issue["number"] in by_ticket:
+            floor_for(issue)                              # closed history without an active PR needs no fetch
     for pr in prs:                                         # every PR by an agent or the owner ...
         if author_of(pr["user"]["login"]) is None:
             continue
@@ -389,7 +528,9 @@ def reconcile(gh, config: dict, now: float) -> None:
         current = {l["name"] for l in pr["labels"]}
         desired = pr_labels(full, reviews, checks, now, config)
         if not full.get("draft"):                          # also with nothing due, to record a fix round's head
-            desired = route_pr(gh, full, reviews, checks, current, desired, ticket_points.get(ticket), config)
+            desired = route_pr(gh, full, reviews, checks, current, desired, ticket_points.get(ticket), config,
+                               ticket_floors.get(ticket, 0)
+                               if author_of(full["user"]["login"]) == ticket_implementers.get(ticket) else 0)
         sync_labels(gh, pr["number"], current, desired, known)
         handled.add(pr["number"])
     for item in gh.all("/issues?state=open"):            # no longer a factory item: clear our labels
@@ -402,6 +543,8 @@ def reconcile(gh, config: dict, now: float) -> None:
         current = {l["name"] for l in issue["labels"]}
         delivered = issue.get("state_reason") == "completed" and issue["number"] in merged
         sync_labels(gh, issue["number"], current, acceptance_labels(current) if delivered else set(), known)
+
+    sync_ticket_metrics(gh, ready, now, config)
 
 
 def main() -> int:
