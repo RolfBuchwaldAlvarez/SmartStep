@@ -19,7 +19,7 @@ This is a **review package**, prepared November 1, 2026. It compares the owner-s
 | 3 | Real-API insights and ephemeral Coach chat | No AI/network/Coach feature found. |
 | 4 | Monday–Sunday reports with metric tabs and week navigation | No report route/query/UI found. |
 
-These are **product** milestones. The existing GitHub "Factory pilot" milestone and issues #8–#11 cover factory readiness; they are not product milestone 1. This planning snapshot does not update their live state.
+These are **product** milestones. The existing GitHub "Factory setup" milestone (named "Factory pilot" until 2026-11-14) and issues #8–#11 cover factory readiness; they are not product milestone 1. This planning snapshot does not update their live state.
 
 ## Reviewer remit
 
@@ -41,7 +41,7 @@ These are **product** milestones. The existing GitHub "Factory pilot" milestone 
 5. Resolve D07 before M4 aggregation and report acceptance. The ledger/query portions can use approved contracts/fakes before all AI UI work is complete, but full product milestone-4 acceptance follows milestone 3.
 6. On issue promotion, use the foundation ticket template (Goal, Given/When/Then criteria, scope and exclusions), retain source IDs/dependencies and create issues without points or `points:*` labels so the conductor sets `factory:estimate`. Obtain independent `Estimate:` comments from Codex and Claude, then owner acceptance of points and readiness. Do not publish all drafts as active ready work in one bulk step.
 
-Existing factory prerequisites remain separate: activated detekt (#8 / merged #12's template), conductor judge/metrics work (#9), SmartStep AGENTS/foundation pin (#10), foundation restructuring/release and first-pilot approval (#11). This PR does not install workflows, change rulesets or claim those prerequisites complete.
+Existing factory prerequisites remain separate: activated detekt (#8 / merged #12's template), conductor judge/metrics work (#9), SmartStep AGENTS/foundation pin (#10), foundation restructuring/release and approval of the first factory ticket (#11). This PR does not install workflows, change rulesets or claim those prerequisites complete.
 
 ## Evidence and limits
 
