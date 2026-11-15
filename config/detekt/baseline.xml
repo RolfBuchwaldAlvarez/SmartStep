@@ -1,0 +1,18 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>InvalidPackageDeclaration:Error.kt:package com.buchwald.coffeedate.lib.error</ID>
+    <ID>InvalidPackageDeclaration:Result.kt:package com.buchwald.coffeedate.lib.result.domain</ID>
+    <ID>InvalidPackageDeclaration:Result.kt:package com.buchwald.coffeedate.lib.result.service</ID>
+    <ID>InvalidPackageDeclaration:ResultExt.kt:package com.buchwald.coffeedate.lib.result.service</ID>
+    <ID>LongMethod:MyProfileDialog.kt:@Composable internal fun MyProfileDialog</ID>
+    <ID>LongMethod:MyProfileDropDownMenu.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable internal fun MyProfileDropDownMenu</ID>
+    <ID>LongMethod:MyProfileScreen.kt:@OptIn(ExperimentalMaterial3Api::class) @Composable private fun MyProfileContent</ID>
+    <ID>MagicNumber:MainActivity.kt:MainActivity$1000L</ID>
+    <ID>MagicNumber:SmartStepApp.kt:SmartStepApp$500L</ID>
+    <ID>MatchingDeclarationName:SmartStepPermissionPrompt.kt:PermissionPromptType</ID>
+    <ID>TooManyFunctions:SmartStepPermissionPrompt.kt:com.akcrba.smartstep.feature.home.presentation.composables.SmartStepPermissionPrompt.kt</ID>
+    <ID>UnusedParameter:HomeScreen.kt:onAction: (HomeAction) -&gt; Unit</ID>
+  </CurrentIssues>
+</SmellBaseline>

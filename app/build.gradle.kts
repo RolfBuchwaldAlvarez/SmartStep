@@ -88,11 +88,12 @@ dependencies {
 }
 
 // Static analysis (Second Brain, 50-domains/android/build-and-tooling.md). `./gradlew detekt` runs the light
-// mode (no type resolution) that android-ci uses; findings fail the build.
+// mode (no type resolution) used by the Android CI template. New findings fail the build.
 detekt {
     buildUponDefaultConfig = true
     parallel = true
     config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+    baseline = rootProject.file("config/detekt/baseline.xml")
 }
 
 ktlint {
